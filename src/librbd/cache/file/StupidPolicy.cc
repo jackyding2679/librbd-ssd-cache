@@ -22,11 +22,16 @@ StupidPolicy<I>::StupidPolicy(I &image_ctx, BlockGuard &block_guard)
   : m_image_ctx(image_ctx), m_block_guard(block_guard),
     m_lock("librbd::cache::file::StupidPolicy::m_lock") {
 
+	uint64_t cache_block_id = 0;
+
   // TODO support resizing of entries based on number of provisioned blocks
   m_entries.resize(m_image_ctx.ssd_cache_size / BLOCK_SIZE); // 1GB of storage
   for (auto &entry : m_entries) {
     m_free_lru.insert_tail(&entry);
+  	entry.cache_block = cache_block_id;//modified by dingl
+	++cache_block_id;
   }
+   ldout(cct, 5) << "cache_block_id is" << cache_block_id << dendl;
 }
 
 template <typename I>
@@ -224,7 +229,8 @@ int StupidPolicy<I>::map(IOType io_type, uint64_t block, bool partial_block,
     *policy_map_result = POLICY_MAP_RESULT_NEW;
     m_free_lru.remove(entry);
 
-    entry->block = block;
+    //entry->block = block;
+    entry->image_block = block;//modified by dingl
     m_block_to_entries[block] = entry;
     m_clean_lru.insert_head(entry);
     return 0;
@@ -233,23 +239,28 @@ int StupidPolicy<I>::map(IOType io_type, uint64_t block, bool partial_block,
   // if we have clean entries we can demote, attempt to steal the oldest
   entry = reinterpret_cast<Entry*>(m_clean_lru.get_tail());
   if (entry != nullptr) {
-    int r = m_block_guard.detain(entry->block, nullptr);
-    if (r >= 0) {
-      ldout(cct, 20) << "cache miss -- replace entry" << dendl;
-      *policy_map_result = POLICY_MAP_RESULT_REPLACE;
-      *replace_cache_block = entry->block;
+    //int r = m_block_guard.detain(entry->block, nullptr);
+    /*modified by dingl,no need to detain block */
+    //if (r >= 0) {                                         
+	  ldout(cct, 20) << "cache miss -- replace entry" << dendl;
+	  *policy_map_result = POLICY_MAP_RESULT_REPLACE;
+	  //*replace_cache_block = entry->block;
+	  *replace_cache_block = entry->cache_block;/*find a evict entry£¬
+	                                            write data to this cacheblock*/
 
-      m_block_to_entries.erase(entry->block);
-      m_clean_lru.remove(entry);
+	  //m_block_to_entries.erase(entry->block);
+	  m_block_to_entries.erase(entry->image_block);
+	  m_clean_lru.remove(entry);
 
-      entry->block = block;
-      m_block_to_entries[block] = entry;
-      m_clean_lru.insert_head(entry);
-      return 0;
-    }
-    ldout(cct, 20) << "cache miss -- replacement deferred" << dendl;
+	  //entry->block = block;
+	  entry->image_block = block;
+	  m_block_to_entries[block] = entry;
+	  m_clean_lru.insert_head(entry);
+	  return 0;
+    //}
+    //ldout(cct, 20) << "cache miss -- replacement deferred" << dendl;
   } else {
-    ldout(cct, 20) << "cache miss" << dendl;
+    ldout(cct, 5) << "cache miss" << dendl;
   }
 
   // no clean entries to evict -- treat this as a miss
@@ -275,7 +286,8 @@ void StupidPolicy<I>::entry_to_bufferlist(uint64_t block, bufferlist *bl){
 
   //TODO
   Entry_t entry;
-  entry.block = entry_it->second->block;
+  entry.cache_block = entry_it->second->cache_block;//modified by dingl
+  entry.image_block = entry_it->second->image_block;
   entry.dirty = entry_it->second->dirty;
   bufferlist encode_bl;
   entry.encode(encode_bl);
@@ -289,6 +301,7 @@ void StupidPolicy<I>::bufferlist_to_entry(bufferlist &bl){
   Mutex::Locker locker(m_lock);
   uint64_t entry_index = 0;
   //TODO
+  //TODO-add to dirty list-add by dingl
   Entry_t entry;
   for (bufferlist::iterator it = bl.begin(); it != bl.end(); ++it) {
 	entry.decode(it);

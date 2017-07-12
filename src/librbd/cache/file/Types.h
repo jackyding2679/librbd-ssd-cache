@@ -27,7 +27,8 @@ namespace stupid_policy {
 
 struct Entry_t {
   bool dirty = false;
-  uint64_t block = 0;
+  uint64_t cache_block = 0;//modified by dingl
+  uint64_t image_block = 0;
 
   void encode(bufferlist& bl) const;
   void decode(bufferlist::iterator& it);

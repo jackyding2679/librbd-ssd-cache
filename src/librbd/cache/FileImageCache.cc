@@ -1134,7 +1134,8 @@ void FileImageCache<I>::map_block(bool detain_block,
     return;
   }
 
-  block_io.block_request->remap(policy_map_result, std::move(block_io), replace_cache_block);//modified by dingl
+  block_io.block_request->remap(policy_map_result, std::move(block_io),
+  								replace_cache_block);//modified by dingl
 }
 
 template <typename I>
