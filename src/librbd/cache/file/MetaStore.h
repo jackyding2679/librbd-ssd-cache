@@ -21,7 +21,7 @@ namespace file {
 template <typename ImageCtxT>
 class MetaStore {
 public:
-  MetaStore(ImageCtxT &image_ctx, uint32_t block_size, uint32_t cache_file_size);//modified by dingl
+  MetaStore(ImageCtxT &image_ctx, uint32_t block_size);
 
   void init(bufferlist *bl, Context *on_finish);
   void set_entry_size(uint32_t entry_size);

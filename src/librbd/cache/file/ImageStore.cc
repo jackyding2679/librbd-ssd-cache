@@ -21,7 +21,8 @@ template <typename I>
 ImageStore<I>::ImageStore(I &image_ctx, MetaStore<I> &metastore)
   : m_image_ctx(image_ctx), m_metastore(metastore),
     m_cache_file(image_ctx, *image_ctx.op_work_queue,
-                 image_ctx.id + ".image_cache") {
+                 image_ctx.id + ".image_cache"), 
+   m_cache_file_size(image_ctx.ssd_cache_size){//add by dingl
 }
 
 template <typename I>
@@ -57,7 +58,10 @@ void ImageStore<I>::reset(Context *on_finish) {
   ldout(cct, 20) << dendl;
 
   // TODO
-  m_cache_file.truncate(m_image_ctx.size, false, on_finish);
+  
+  ldout(cct, 5) << "cache file size is " << m_cache_file_size<< dendl;
+  //m_cache_file.truncate(m_image_ctx.size, false, on_finish);//modified by dingl
+  m_cache_file.truncate(m_cache_file_size, false, on_finish);
 }
 
 template <typename I>

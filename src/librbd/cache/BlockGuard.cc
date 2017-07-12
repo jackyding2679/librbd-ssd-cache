@@ -89,9 +89,10 @@ int BlockGuard::detain(uint64_t block, BlockIO *block_io) {
       return -EBUSY;
     }
 
-    if (block_io != nullptr) {
-      detained_block->block_ios.emplace_back(std::move(*block_io));
-    }
+	//modified by dingl
+    //if (block_io != nullptr) {
+    detained_block->block_ios.emplace_back(std::move(*block_io));
+   // }
 
     // alert the caller that the IO was detained
     return 1;

@@ -41,6 +41,7 @@ private:
   ImageCtxT &m_image_ctx;
   MetaStore<ImageCtxT> &m_metastore;
   AioFile<ImageCtx> m_cache_file;
+  uint32_t m_cache_file_size;//add by dingl
 
 };
 

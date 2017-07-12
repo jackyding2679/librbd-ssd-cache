@@ -17,9 +17,9 @@ namespace cache {
 namespace file {
 
 template <typename I>
-MetaStore<I>::MetaStore(I &image_ctx, uint32_t block_size, uint32_t cache_file_size)//modified by dingl
+MetaStore<I>::MetaStore(I &image_ctx, uint32_t block_size)//modified by dingl
   : m_image_ctx(image_ctx), m_block_size(block_size),
-    m_cache_file_size(cache_file_size), 
+    m_cache_file_size(image_ctx.ssd_cache_size), 
     m_meta_file(image_ctx, *image_ctx.op_work_queue, image_ctx.id + ".meta") {
 }
 
@@ -106,15 +106,17 @@ void MetaStore<I>::load_all(bufferlist *bl, Context *on_finish) {
   });
   //for(uint64_t block_id = 0; block_id < offset_to_block(m_image_ctx.size); block_id++){//modyfied by dingl
   for(uint64_t block_id = 0; block_id < offset_to_block(m_cache_file_size); block_id++){
-  	bufferlist bl_tmp;
-
+    //read_block(block_id, bl, ctx);
+    //if (bl->is_zero()) break;
+    //TO BE TEST
+	bufferlist bl_tmp;
 	read_block(block_id, bl_tmp, ctx);
     if (bl_tmp->is_zero()) {
 		ldout(cct, 5) << "bufferlist is zero,skip this" << dendl; 
+		bl_tmp.clear();
 		continue;
     }
 	bl->claim_append(bl_tmp);
-	
   }
   on_finish->complete(0);
 }

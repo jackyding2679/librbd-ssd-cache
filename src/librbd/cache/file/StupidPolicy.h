@@ -54,10 +54,16 @@ public:
 
 private:
 
-  struct Entry : public LRUObject {
+ /* struct Entry : public LRUObject {
     uint64_t block = 0;
     bool dirty = false;
-  };
+  };*/
+  //modified by dingl
+   struct Entry : public LRUObject {
+	 uint64_t cache_block = 0;
+	 uint64_t image_block = 0;
+	 bool dirty = false;
+   };
 
   typedef std::vector<Entry> Entries;
   typedef std::unordered_map<uint64_t, Entry*> BlockToEntries;
