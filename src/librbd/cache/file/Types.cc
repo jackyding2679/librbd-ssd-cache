@@ -25,6 +25,12 @@ void Entry_t::decode(bufferlist::iterator& it) {
   DECODE_FINISH(it);
 }
 
+//add by dingl
+void Entry_t::dump(Formatter *f) const {
+   f->dump_bool("dirty", dirty);
+   f->dump_unsigned("cache_block", cache_block);
+   f->dump_unsigned("image_block", image_block);
+}
 }
 
 namespace meta_store {
@@ -62,7 +68,8 @@ void Event::encode(bufferlist& bl) const {
   size_t start_offset = bl.end().get_off();
   ENCODE_START(1, 1, bl);
   ::encode(tid, bl);
-  ::encode(block, bl);
+  ::encode(image_block, bl);//modified by dingl
+  ::encode(cache_block, bl);
   ::encode(crc, bl);
   assert(bl.length() - start_offset == ENCODED_FIELDS_OFFSET);
   encode_fields(bl);
@@ -73,7 +80,8 @@ void Event::encode(bufferlist& bl) const {
 void Event::decode(bufferlist::iterator& it) {
   DECODE_START(1, it);
   ::decode(tid, it);
-  ::decode(block, it);
+  ::decode(image_block, it);//modified by dingl
+  ::decode(cache_block, it);
   ::decode(crc, it);
   uint8_t byte_fields;
   ::decode(byte_fields, it);
@@ -83,6 +91,9 @@ void Event::decode(bufferlist::iterator& it) {
 
 void Event::dump(Formatter *f) const {
   // TODO
+  f->dump_unsigned("tid", tid);//add by dingl
+  f->dump_unsigned("image_block", image_block);
+  f->dump_unsigned("cache_block", cache_block);
 }
 
 void Event::generate_test_instances(std::list<Event *> &o) {

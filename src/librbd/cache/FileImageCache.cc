@@ -103,26 +103,33 @@ struct C_PromoteToCache : public C_BlockIORequest {
   ImageStore<I> &image_store;
   BlockGuard::BlockIO block_io;
   const bufferlist &bl;
+  uint64_t cache_block_id;
 
   C_PromoteToCache(CephContext *cct, ImageStore<I> &image_store,
-                   BlockGuard::BlockIO &block_io, const bufferlist &bl,
-                   C_BlockIORequest *next_block_request)
+                   BlockGuard::BlockIO &block_io, uint64_t cache_block, //modified by dingl
+                   const bufferlist &bl, C_BlockIORequest *next_block_request)
     : C_BlockIORequest(cct, next_block_request),
-      image_store(image_store), block_io(block_io), bl(bl) {
+      image_store(image_store), block_io(block_io), 
+      cache_block_id(cache_block), bl(bl) {
   }
 
   virtual void send() override {
     ldout(cct, 20) << "(" << get_name() << "): "
-                   << "block=" << block_io.block << dendl;
+                   //<< "block=" << block_io.block << dendl;
+                   << "block=" << cache_block_id << dendl;
     // promote the clean block to the cache
     bufferlist sub_bl;
     if(bl.length() > BLOCK_SIZE) {
-      sub_bl.substr_of(bl, block_io.extents[0].buffer_offset, block_io.extents[0].block_length);
+      sub_bl.substr_of(bl, block_io.extents[0].buffer_offset, 
+	  						block_io.extents[0].block_length);
     } else {
       sub_bl.append(bl);
     }
-    image_store.write_block(block_io.block, {{0, BLOCK_SIZE}}, std::move(sub_bl),
-                            this);
+    //image_store.write_block(block_io.block, {{0, BLOCK_SIZE}}, std::move(sub_bl),
+    //                        this);
+    //modified by dingl
+    image_store.write_block(cache_block_id, {{0, BLOCK_SIZE}}, std::move(sub_bl),
+                             this);
   }
   virtual const char *get_name() const override {
     return "C_PromoteToCache";
@@ -419,14 +426,16 @@ template <typename I>
 struct C_AppendEventToJournal : public C_BlockIORequest {
   JournalStore<I> &journal_store;
   uint64_t tid;
-  uint64_t block;
+  uint64_t image_block_id;//modified by dingl
+  uint64_t cache_block_id;
   IOType io_type;
 
   C_AppendEventToJournal(CephContext *cct, JournalStore<I> &journal_store,
-                         uint64_t tid, uint64_t block, IOType io_type,
-                         C_BlockIORequest *next_block_request)
+                         uint64_t tid, uint64_t image_block, uint64_t cache_block, 
+                         IOType io_type, C_BlockIORequest *next_block_request)
     : C_BlockIORequest(cct, next_block_request),
-      journal_store(journal_store), tid(tid), block(block), io_type(io_type) {
+      journal_store(journal_store), tid(tid), image_block_id(image_block), 
+      cache_block_id(cache_block), io_type(io_type) {
   }
 
   virtual void send() override {
@@ -434,7 +443,9 @@ struct C_AppendEventToJournal : public C_BlockIORequest {
                    << "tid=" << tid << ", "
                    << "block=" << block << ", "
                    << "io_type=" << io_type << dendl;
-    journal_store.append_event(tid, block, io_type, this);
+    //journal_store.append_event(tid, block, io_type, this);
+    //modified by dingl
+    journal_store.append_event(tid, image_block_id, cache_block_id, io_type, this);
   }
   virtual const char *get_name() const override {
     return "C_AppendEventToJournal";
@@ -581,7 +592,7 @@ struct C_WriteBlockRequest : BlockGuard::C_BlockRequest {
   }
 
   virtual void remap(PolicyMapResult policy_map_result,
-                     BlockGuard::BlockIO &&block_io, uint64_t replace_block) {
+                     BlockGuard::BlockIO &&block_io, uint64_t cache_block) {
     CephContext *cct = image_ctx.cct;
 
     // TODO: consolidate multiple writes into a single request (i.e. don't
@@ -603,8 +614,10 @@ struct C_WriteBlockRequest : BlockGuard::C_BlockRequest {
         // block is now dirty -- can't be replaced until flushed
         policy.set_dirty(block_io.block);
       }
-      req = new C_WriteToMetaRequest<I>(cct, meta_store, block_io.block, &policy, req);
-
+      //req = new C_WriteToMetaRequest<I>(cct, meta_store, block_io.block, &policy, req);
+      //Write metadata to cache_block
+	  req = new C_WriteToMetaRequest<I>(cct, meta_store, cache_block, &policy, req);
+	  
       IOType io_type = static_cast<IOType>(block_io.io_type);
       if ((io_type == IO_TYPE_WRITE || io_type == IO_TYPE_DISCARD) &&
           block_io.tid == 0) {
@@ -654,21 +667,19 @@ struct C_WriteBlockRequest : BlockGuard::C_BlockRequest {
         // full block overwrite
         if (block_io.tid > 0 && (1 == policy.get_write_mode())) {
           req = new C_AppendEventToJournal<I>(cct, journal_store, block_io.tid,
-                                              block_io.block, IO_TYPE_WRITE,
-                                              req);
+                                              block_io.block, cache_block,//modified by dingl 
+                                              IO_TYPE_WRITE, req);
         }
 
-        req = new C_PromoteToCache<I>(cct, image_store, block_io,
+        req = new C_PromoteToCache<I>(cct, image_store, block_io, cache_block, 
                                       bl, req);
       }
 
       if (policy_map_result == POLICY_MAP_RESULT_REPLACE) {
-	ldout(cct, 5) << "C_DemoteFromCache, Replace" << dendl;
+		ldout(cct, 5) << "C_DemoteFromCache, Replace" << dendl;
         //req = new C_DemoteFromCache<I>(cct, image_store, release_block,
          //                              block_io.block, req);
-        
-        req = new C_DemoteFromCache<I>(cct, image_store, release_block,
-                                       replace_block, req);
+        //No need to demote from cache--modified by dingl
       }
     }
     req->send();
@@ -685,7 +696,8 @@ struct C_WritebackRequest : public Context {
   const ReleaseBlock &release_block;
   util::AsyncOpTracker &async_op_tracker;
   uint64_t tid;
-  uint64_t block;
+  uint64_t image_block_id;//modified by dingl
+  uint64_t cache_block_id;
   IOType io_type;
   bool demoted;
   uint32_t block_size;
@@ -697,13 +709,13 @@ struct C_WritebackRequest : public Context {
                      ImageStore<I> &image_store,
                      const ReleaseBlock &release_block,
                      util::AsyncOpTracker &async_op_tracker, uint64_t tid,
-                     uint64_t block, IOType io_type, bool demoted,
-                     uint32_t block_size)
+                     uint64_t image_block, uint64_t cache_block, 
+                     IOType io_type, bool demoted, uint32_t block_size)
     : image_ctx(image_ctx), image_writeback(image_writeback),
       policy(policy), journal_store(journal_store), image_store(image_store),
       release_block(release_block), async_op_tracker(async_op_tracker),
-      tid(tid), block(block), io_type(io_type), demoted(demoted),
-      block_size(block_size) {
+      tid(tid), image_block_id(image_block), cache_block_id(cache_block), 
+      io_type(io_type), demoted(demoted), block_size(block_size) {
     async_op_tracker.start_op();
   }
   virtual ~C_WritebackRequest() {
@@ -724,7 +736,9 @@ struct C_WritebackRequest : public Context {
     if (demoted) {
       journal_store.get_writeback_block(tid, &bl, ctx);
     } else {
-      image_store.read_block(block, {{0, block_size}}, &bl, ctx);
+      //image_store.read_block(block, {{0, block_size}}, &bl, ctx);
+      //modified by dingl
+      image_store.read_block(cache_block_id, {{0, block_size}}, &bl, ctx);
     }
   }
 
@@ -1122,9 +1136,9 @@ void FileImageCache<I>::map_block(bool detain_block,
 
   IOType io_type = static_cast<IOType>(block_io.io_type);
   PolicyMapResult policy_map_result;
-  uint64_t replace_cache_block;
+  uint64_t cache_block;
   r = m_policy->map(io_type, block_io.block, block_io.partial_block,
-                    &policy_map_result, &replace_cache_block);
+                    &policy_map_result, &cache_block);
   if (r < 0) {
     // fail this IO and release any detained IOs to the block
     lderr(cct) << "failed to map block via cache policy: " << cpp_strerror(r)
@@ -1135,7 +1149,7 @@ void FileImageCache<I>::map_block(bool detain_block,
   }
 
   block_io.block_request->remap(policy_map_result, std::move(block_io),
-  								replace_cache_block);//modified by dingl
+  								cache_block);//modified by dingl
 }
 
 template <typename I>
@@ -1231,11 +1245,12 @@ void FileImageCache<I>::process_writeback_dirty_blocks() {
   // TODO throttle the amount of in-flight writebacks
   while (true) {
     uint64_t tid = 0;
-    uint64_t block;
+    uint64_t image_block;//modified by dingl
+	uint64_t cache_block;
     IOType io_type;
     bool demoted;
-    int r = m_journal_store->get_writeback_event(&tid, &block, &io_type,
-                                                 &demoted);
+    int r = m_journal_store->get_writeback_event(&tid, &image_block,
+											&cache_block, &io_type, &demoted);
     //int r = m_policy->get_writeback_block(&block);
     if (r == -ENODATA || r == -EBUSY) {
       // nothing to writeback

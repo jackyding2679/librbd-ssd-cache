@@ -20,12 +20,15 @@ namespace file {
 template <typename I>
 StupidPolicy<I>::StupidPolicy(I &image_ctx, BlockGuard &block_guard)
   : m_image_ctx(image_ctx), m_block_guard(block_guard),
-    m_lock("librbd::cache::file::StupidPolicy::m_lock") {
+    m_lock("librbd::cache::file::StupidPolicy::m_lock"),
+    m_image_block_cout(m_image_ctx.size / BLOCK_SIZE), 
+    m_cache_block_cout(m_image_ctx.ssd_cache_size / BLOCK_SIZE) {
 
 	uint64_t cache_block_id = 0;
 
   // TODO support resizing of entries based on number of provisioned blocks
-  m_entries.resize(m_image_ctx.ssd_cache_size / BLOCK_SIZE); // 1GB of storage
+  //m_entries.resize(m_image_ctx.ssd_cache_size / BLOCK_SIZE); // 1GB of storage
+  m_entries.resize(m_cache_block_cout); 
   for (auto &entry : m_entries) {
     m_free_lru.insert_tail(&entry);
   	entry.cache_block = cache_block_id;//modified by dingl
@@ -62,7 +65,8 @@ void StupidPolicy<I>::set_block_count(uint64_t block_count) {
 
   // TODO ensure all entries are in-bound
   Mutex::Locker locker(m_lock);
-  m_block_count = block_count;
+  //m_block_count = block_count;
+  m_image_block_count = block_count;
 
 }
 
@@ -189,12 +193,13 @@ int StupidPolicy<I>::get_writeback_block(uint64_t *block) {
 template <typename I>
 int StupidPolicy<I>::map(IOType io_type, uint64_t block, bool partial_block,
                          PolicyMapResult *policy_map_result,
-                         uint64_t *replace_cache_block) {
+                         uint64_t *cache_block) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "block=" << block << dendl;
 
   Mutex::Locker locker(m_lock);
-  if (block >= m_block_count) {
+ // if (block >= m_block_count) {
+  if (block >= m_image_block_cout) {
     lderr(cct) << "block outside of valid range" << dendl;
     *policy_map_result = POLICY_MAP_RESULT_MISS;
     // TODO return error once resize handling is in-place
@@ -218,6 +223,8 @@ int StupidPolicy<I>::map(IOType io_type, uint64_t block, bool partial_block,
 
     lru->remove(entry);
     lru->insert_head(entry);
+
+	*cache_block = entry->cache_block;//return cache block,add by dingl
     return 0;
   }
 
@@ -227,6 +234,7 @@ int StupidPolicy<I>::map(IOType io_type, uint64_t block, bool partial_block,
     // entries are available -- allocate a slot
     ldout(cct, 20) << "cache miss -- new entry" << dendl;
     *policy_map_result = POLICY_MAP_RESULT_NEW;
+	*cache_block = entry->cache_block;//return cache block
     m_free_lru.remove(entry);
 
     //entry->block = block;
@@ -245,7 +253,7 @@ int StupidPolicy<I>::map(IOType io_type, uint64_t block, bool partial_block,
 	  ldout(cct, 20) << "cache miss -- replace entry" << dendl;
 	  *policy_map_result = POLICY_MAP_RESULT_REPLACE;
 	  //*replace_cache_block = entry->block;
-	  *replace_cache_block = entry->cache_block;/*find a evict entry£¬
+	  *cache_block = entry->cache_block;/*find a evict entry£¬
 	                                            write data to this cacheblock*/
 
 	  //m_block_to_entries.erase(entry->block);
@@ -298,19 +306,46 @@ void StupidPolicy<I>::entry_to_bufferlist(uint64_t block, bufferlist *bl){
 
 template <typename I>
 void StupidPolicy<I>::bufferlist_to_entry(bufferlist &bl){
-  Mutex::Locker locker(m_lock);
-  uint64_t entry_index = 0;
+	CephContext *cct = m_image_ctx.cct;
+
+	Mutex::Locker locker(m_lock);
+	JSONFormatter f(false);
+ // uint64_t entry_index = 0;
   //TODO
   //TODO-add to dirty list-add by dingl
-  Entry_t entry;
-  for (bufferlist::iterator it = bl.begin(); it != bl.end(); ++it) {
-	entry.decode(it);
-	auto entry_it = m_entries[entry_index++];
-	entry_it.block = entry.block;
-	entry_it.dirty = entry.dirty;
-  }
-  CephContext *cct = m_image_ctx.cct;
-  ldout(cct, 20) << "Total load " << entry_index << " entries" << dendl;
+	Entry_t entry;
+  //for (bufferlist::iterator it = bl.begin(); it != bl.end(); ++it) {
+  /*When using encode and iterator at the same time,it shouldn't use operator++*/
+	for (bufferlist::iterator it = bl.begin(); it != bl.end();) {
+		//entry.decode(it);
+		//auto entry_it = m_entries[entry_index++];
+		//entry_it.block = entry.block;
+		//entry_it.dirty = entry.dirty;
+		bool is_dirty;
+		uint64_t cache_block;
+
+		entry.decode(it);
+		is_dirty = entry.dirty;
+		cache_block = entry.cache_block;
+		if (cache_block < 0 || (cache_block > m_cache_block_cout - 1)) {
+			lderr(cct) << "cache block id out of range, block:" << cache_block << dendl;
+			assert(false);
+		}
+		//Debug
+		entry.dump(&f);
+		auto entry_it = m_entries[cache_block];
+		//Remove from the free lru list, and insert to the corresponding list
+		m_free_lru.remove(&entry_it);
+		if (is_dirty) {
+			m_dirty_lru.insert_head(&entry_it);
+		} else {
+			m_clean_lru.insert_head(&entry_it);
+		}
+		//Update the block_to_entries map
+		m_block_to_entries[cache_block] = &entry;
+	}
+  //CephContext *cct = m_image_ctx.cct;
+  //ldout(cct, 20) << "Total load " << entry_index << " entries" << dendl;
 
 }
 

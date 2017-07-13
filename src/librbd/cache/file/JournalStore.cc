@@ -132,7 +132,7 @@ int JournalStore<I>::allocate_tid(uint64_t *tid) {
   ++m_event_ref_alloc_iter;
    //add by dingl
   if (m_event_ref_alloc_iter == m_event_refs.end()) {
-     lderr(cct) << "iterator m_event_ref_alloc_iter reach the end of the list" << dendl;
+     ldout(cct, 5) << "iterator m_event_ref_alloc_iter reach the end of the list" << dendl;
      m_event_ref_alloc_iter = m_event_refs.begin();
   }
 
@@ -146,8 +146,8 @@ int JournalStore<I>::allocate_tid(uint64_t *tid) {
 }
 
 template <typename I>
-void JournalStore<I>::append_event(uint64_t tid, uint64_t block, IOType io_type,
-                                   Context *on_finish) {
+void JournalStore<I>::append_event(uint64_t tid, uint64_t image_block,
+					uint64 cache_block, IOType io_type, Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "tid=" << tid << ", "
                  << "block=" << block << ", "
@@ -163,7 +163,9 @@ void JournalStore<I>::append_event(uint64_t tid, uint64_t block, IOType io_type,
     assert(it != m_tid_to_event_refs.end());
 
     event_ref = &(*it);
-    m_block_to_tids[block] = tid;
+    //m_block_to_tids[block] = tid;
+    //modified by dingl
+    m_block_to_tids[image_block] = tid;
   }
 
   // ring-buffer event offset can be calculated
@@ -173,13 +175,15 @@ void JournalStore<I>::append_event(uint64_t tid, uint64_t block, IOType io_type,
   // on-disk event format
   Event event;
   event.tid = tid;
-  event.block = block;
+  event.image_block = image_block;//modified by dingl
+  event.cache_block = cache_block;
   event.fields.io_type = io_type;
   event.fields.demoted = false;
   event.fields.committed = false;
 
   // in-memory event format
-  event_ref->block = block;
+  event_ref->image_block = image_block;//modified by dingl
+  event_ref->cache_block = cache_block;
   event_ref->io_type = io_type;
   event_ref->event_state = EVENT_STATE_VALID;
   event_ref->demoted = false;
@@ -279,8 +283,8 @@ bool JournalStore<I>::is_writeback_pending() const {
 }
 
 template <typename I>
-int JournalStore<I>::get_writeback_event(uint64_t *tid, uint64_t *block,
-                                         IOType *io_type, bool *demoted) {
+int JournalStore<I>::get_writeback_event(uint64_t *tid, uint64_t *image_block, 
+  					uint64_t cache_block, IOType *io_type, bool *demoted) {
   CephContext *cct = m_image_ctx.cct;
   EventRef *event_ref;
   {
@@ -317,7 +321,8 @@ int JournalStore<I>::get_writeback_event(uint64_t *tid, uint64_t *block,
                  << "io_type=" << event_ref->io_type << ", "
                  << "demoted=" << event_ref->demoted << dendl;
   *tid = event_ref->tid;
-  *block = event_ref->block;
+  *image_block = event_ref->image_block;//modified by dingl
+  *cache_block = event_ref->cache_block;
   *io_type = event_ref->io_type;
   *demoted = event_ref->demoted;
   return 0;

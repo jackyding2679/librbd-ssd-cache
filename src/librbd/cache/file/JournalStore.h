@@ -63,7 +63,8 @@ public:
   int allocate_tid(uint64_t *tid);
 
   /// record journal event to specified slot
-  void append_event(uint64_t tid, uint64_t block,
+  //modified by dingl
+  void append_event(uint64_t tid, uint64_t image_block, uint64_t cache_block,
                     IOType io_type, Context *on_finish);
 
   /// true if most recent block op is write
@@ -73,8 +74,9 @@ public:
   void demote_block(uint64_t block, bufferlist &&bl, Context *on_finish);
 
   bool is_writeback_pending() const;
-  int get_writeback_event(uint64_t *tid, uint64_t *block, IOType *io_type,
-                          bool *demoted);
+  //modified by dingl
+  int get_writeback_event(uint64_t *tid, uint64_t *image_block, 
+  						uint64_t cache_block, IOType *io_type, bool *demoted);
   void get_writeback_block(uint64_t tid, bufferlist *bl, Context *on_finish);
   void commit_event(uint64_t tid, Context *on_finish);
 
@@ -97,7 +99,8 @@ private:
     }
 
     uint64_t tid;     ///< monotonically increasing event sequence
-    uint64_t block;   ///< image block associated with event
+    uint64_t image_block;   ///< image block associated with event
+    uint64_t cache_block;   //cache block store data, add by dingl
     IOType io_type : 2;
     EventState event_state : 3;
     bool demoted : 1;

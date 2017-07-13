@@ -72,7 +72,11 @@ private:
   BlockGuard &m_block_guard;
 
   mutable Mutex m_lock;
-  uint64_t m_block_count = 0;
+  //uint64_t m_block_count = 0;
+  //modidied by dingl
+  uint64_t m_image_block_cout;
+  uint64_t m_cache_block_cout;
+	
   uint8_t m_write_mode = 0; // 0:w-t, 1:w-b
 
   Entries m_entries;

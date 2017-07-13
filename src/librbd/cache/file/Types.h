@@ -32,6 +32,7 @@ struct Entry_t {
 
   void encode(bufferlist& bl) const;
   void decode(bufferlist::iterator& it);
+  void dump(Formatter *f) const;//add by dingl
 };
 
 } // namespace stupid_policy
@@ -56,10 +57,13 @@ namespace journal_store {
 
 struct Event {
   static const size_t ENCODED_SIZE = 64;
-  static const size_t ENCODED_FIELDS_OFFSET = 26;
+  //static const size_t ENCODED_FIELDS_OFFSET = 26;
+  //modified by dingl
+  static const size_t ENCODED_FIELDS_OFFSET = 34;
 
   uint64_t tid;   /// TODO can this be eliminated safely?
-  uint64_t block;
+  uint64_t image_block;//modified by dingl
+  uint64_t cache_block;
   uint32_t crc;   /// TODO
 
   struct {
