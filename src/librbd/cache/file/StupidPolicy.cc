@@ -193,7 +193,7 @@ int StupidPolicy<I>::get_writeback_block(uint64_t *block) {
 template <typename I>
 int StupidPolicy<I>::map(IOType io_type, uint64_t block, bool partial_block,
                          PolicyMapResult *policy_map_result,
-                         uint64_t *cache_block) {
+                         uint64_t *cache_block, uint64_t *replace_image_block) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "block=" << block << dendl;
 
@@ -244,18 +244,18 @@ int StupidPolicy<I>::map(IOType io_type, uint64_t block, bool partial_block,
     return 0;
   }
 
+  //TODO-move item in clean list to free list,add by dingl
   // if we have clean entries we can demote, attempt to steal the oldest
   entry = reinterpret_cast<Entry*>(m_clean_lru.get_tail());
   if (entry != nullptr) {
     //int r = m_block_guard.detain(entry->block, nullptr);
-    /*modified by dingl,no need to detain block */
-    //if (r >= 0) {                                         
+    int r = m_block_guard.detain(entry->image_block, nullptr);
+    if (r >= 0) {                                         
 	  ldout(cct, 20) << "cache miss -- replace entry" << dendl;
 	  *policy_map_result = POLICY_MAP_RESULT_REPLACE;
-	  //*replace_cache_block = entry->block;
+	  *replace_image_block = entry->image_block;
 	  *cache_block = entry->cache_block;/*find a evict entry£¬
-	                                            write data to this cacheblock*/
-
+	                                    write data to this cacheblock*/
 	  //m_block_to_entries.erase(entry->block);
 	  m_block_to_entries.erase(entry->image_block);
 	  m_clean_lru.remove(entry);
@@ -265,8 +265,8 @@ int StupidPolicy<I>::map(IOType io_type, uint64_t block, bool partial_block,
 	  m_block_to_entries[block] = entry;
 	  m_clean_lru.insert_head(entry);
 	  return 0;
-    //}
-    //ldout(cct, 20) << "cache miss -- replacement deferred" << dendl;
+    }
+    ldout(cct, 20) << "cache miss -- replacement deferred" << dendl;
   } else {
     ldout(cct, 5) << "cache miss" << dendl;
   }

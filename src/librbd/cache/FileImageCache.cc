@@ -152,7 +152,9 @@ struct C_DemoteFromCache : public C_BlockIORequest {
   virtual void send() override {
     ldout(cct, 20) << "(" << get_name() << "): "
                    << "block=" << block << dendl;
-    image_store.discard_block(block, this);
+    //image_store.discard_block(block, this);
+    //No need to discard block,just release detained block,add by dingl
+    complete(0);
   }
   virtual const char *get_name() const override {
     return "C_DemoteFromCache";
@@ -592,7 +594,8 @@ struct C_WriteBlockRequest : BlockGuard::C_BlockRequest {
   }
 
   virtual void remap(PolicyMapResult policy_map_result,
-                     BlockGuard::BlockIO &&block_io, uint64_t cache_block) {
+                     BlockGuard::BlockIO &&block_io, uint64_t cache_block, 
+                     uint64_t replace_image_block) {
     CephContext *cct = image_ctx.cct;
 
     // TODO: consolidate multiple writes into a single request (i.e. don't
@@ -679,7 +682,9 @@ struct C_WriteBlockRequest : BlockGuard::C_BlockRequest {
 		ldout(cct, 5) << "C_DemoteFromCache, Replace" << dendl;
         //req = new C_DemoteFromCache<I>(cct, image_store, release_block,
          //                              block_io.block, req);
-        //No need to demote from cache--modified by dingl
+         //Just release the detained block in policy when replace, add by dingl
+         req = new C_DemoteFromCache<I>(cct, image_store, release_block,
+                                       replace_image_block, req);
       }
     }
     req->send();
@@ -763,7 +768,10 @@ struct C_WritebackRequest : public Context {
     Context *ctx = util::create_context_callback<
       C_WritebackRequest<I>,
       &C_WritebackRequest<I>::handle_write_to_image>(this);
-    image_writeback.aio_write({{block * block_size, block_size}}, std::move(bl),
+    // image_writeback.aio_write({{block * block_size, block_size}}, std::move(bl),
+    //                          0, ctx);
+    //modified by dingl
+    image_writeback.aio_write({{image_block_id * block_size, block_size}}, std::move(bl),
                               0, ctx);
   }
 
@@ -791,7 +799,9 @@ struct C_WritebackRequest : public Context {
     ldout(cct, 20) << "(C_WritebackRequest)" << dendl;
 
     if (!demoted) {
-      policy.clear_dirty(block);
+      //policy.clear_dirty(block);
+      //modified by dingl
+      policy.clear_dirty(image_block_id);
     }
 
     Context *ctx = util::create_context_callback<
@@ -1137,8 +1147,9 @@ void FileImageCache<I>::map_block(bool detain_block,
   IOType io_type = static_cast<IOType>(block_io.io_type);
   PolicyMapResult policy_map_result;
   uint64_t cache_block;
+  uint64_t replace_image_block;
   r = m_policy->map(io_type, block_io.block, block_io.partial_block,
-                    &policy_map_result, &cache_block);
+                    &policy_map_result, &cache_block, &replace_image_block);
   if (r < 0) {
     // fail this IO and release any detained IOs to the block
     lderr(cct) << "failed to map block via cache policy: " << cpp_strerror(r)
@@ -1149,7 +1160,7 @@ void FileImageCache<I>::map_block(bool detain_block,
   }
 
   block_io.block_request->remap(policy_map_result, std::move(block_io),
-  								cache_block);//modified by dingl
+  								cache_block, replace_image_block);//modified by dingl
 }
 
 template <typename I>
@@ -1264,8 +1275,8 @@ void FileImageCache<I>::process_writeback_dirty_blocks() {
     // block is now detained -- safe for writeback
     C_WritebackRequest<I> *req = new C_WritebackRequest<I>(
       m_image_ctx, m_image_writeback, *m_policy, *m_journal_store,
-      *m_image_store, m_release_block, m_async_op_tracker, tid, block, io_type,
-      demoted, BLOCK_SIZE);
+      *m_image_store, m_release_block, m_async_op_tracker, tid, image_block, 
+      cache_block, io_type, demoted, BLOCK_SIZE);
     req->send();
   }
 }

@@ -45,8 +45,8 @@ public:
   virtual int get_writeback_block(uint64_t *block);
 
   virtual int map(IOType io_type, uint64_t block, bool partial_block,
-                  PolicyMapResult *policy_map_result,
-                  uint64_t *replace_cache_block);
+                         PolicyMapResult *policy_map_result,
+                         uint64_t *cache_block, uint64_t *replace_image_block);
   virtual void tick();
   virtual int get_entry_size();
   virtual void entry_to_bufferlist(uint64_t block, bufferlist *bl);

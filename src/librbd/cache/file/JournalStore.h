@@ -76,7 +76,7 @@ public:
   bool is_writeback_pending() const;
   //modified by dingl
   int get_writeback_event(uint64_t *tid, uint64_t *image_block, 
-  						uint64_t cache_block, IOType *io_type, bool *demoted);
+  						uint64_t *cache_block, IOType *io_type, bool *demoted);
   void get_writeback_block(uint64_t tid, bufferlist *bl, Context *on_finish);
   void commit_event(uint64_t tid, Context *on_finish);
 

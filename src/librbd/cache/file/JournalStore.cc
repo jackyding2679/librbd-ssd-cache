@@ -284,7 +284,7 @@ bool JournalStore<I>::is_writeback_pending() const {
 
 template <typename I>
 int JournalStore<I>::get_writeback_event(uint64_t *tid, uint64_t *image_block, 
-  					uint64_t cache_block, IOType *io_type, bool *demoted) {
+  					uint64_t *cache_block, IOType *io_type, bool *demoted) {
   CephContext *cct = m_image_ctx.cct;
   EventRef *event_ref;
   {
@@ -301,9 +301,11 @@ int JournalStore<I>::get_writeback_event(uint64_t *tid, uint64_t *image_block,
     }
 
     // if block guard full or block already detained, cannot writeback
-    int r = m_block_guard.detain(event_ref->block, nullptr);
+    //int r = m_block_guard.detain(event_ref->block, nullptr);
+    //detain image block,in case this image block is being dirty-write, add by dingl
+    int r = m_block_guard.detain(event_ref->image_block, nullptr);
     if (r != 0) {
-      ldout(cct, 20) << "block " << event_ref->block << " busy" << dendl;
+      ldout(cct, 20) << "block " << event_ref->image_block << " busy" << dendl;
       return -EBUSY;
     }
 
@@ -317,7 +319,8 @@ int JournalStore<I>::get_writeback_event(uint64_t *tid, uint64_t *image_block,
   }
 
   ldout(cct, 20) << "tid=" << event_ref->tid << ", "
-                 << "block=" << event_ref->block << ", "
+                 << "image block=" << event_ref->image_block << ", "
+                 << "cache block=" << event_ref->cache_block << ", "
                  << "io_type=" << event_ref->io_type << ", "
                  << "demoted=" << event_ref->demoted << dendl;
   *tid = event_ref->tid;
@@ -383,12 +386,18 @@ void JournalStore<I>::commit_event(uint64_t tid, Context *on_finish) {
   size_t event_idx = event_ref - &m_event_ref_pool.front();
   uint64_t event_offset = (event_idx * Event::ENCODED_SIZE) +
                           Event::ENCODED_FIELDS_OFFSET;
-  uint64_t block = event_ref->block;
+  //uint64_t block = event_ref->block;
+  //modified by dingl
+  uint64_t block_offset = event_idx * m_block_size;
+  uint64_t image_block = event_ref->image_block;
+  uint64_t cache_block = event_ref->cache_block;
 
   Event event;
   event.fields.io_type = event_ref->io_type;
   event.fields.demoted = event_ref->demoted;
-  event.fields.allocated = event_ref->demoted;
+  // event.fields.allocated = event_ref->demoted;
+  // modified by dingl
+  event.fields.allocated = event_ref->allocated;
   event.fields.committed = true;
 
   Context *ctx = new FunctionContext(
@@ -455,7 +464,9 @@ void JournalStore<I>::commit_event(uint64_t tid, Context *on_finish) {
               next_ctx->complete(r);
             });
         }
-        m_block_file.discard(block * m_block_size, m_block_size, true, next_ctx);
+        //m_block_file.discard(block * m_block_size, m_block_size, true, next_ctx);
+        //modified by dingl
+        m_block_file.discard(block_offset * m_block_size, m_block_size, true, next_ctx);
       });
   }
 

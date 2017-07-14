@@ -44,7 +44,8 @@ public:
     virtual void finish(int r) override;
 
     virtual void remap(PolicyMapResult policy_map_result,
-                       BlockIO &&block_io, uint64_t replace_block = 0) = 0;//modified by dingl
+                       BlockIO &&block_io, uint64_t cache_block, 
+                       uint64_t replace_image_block) = 0;//modified by dingl
   };
 
   struct BlockIOExtent {
