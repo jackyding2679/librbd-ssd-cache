@@ -375,7 +375,9 @@ void JournalStore<I>::commit_event(uint64_t tid, Context *on_finish) {
 
     event_ref = &(*it);
 
-    auto block_it = m_block_to_tids.find(event_ref->block);
+    //auto block_it = m_block_to_tids.find(event_ref->block);
+    //modified by dingl
+    auto block_it = m_block_to_tids.find(event_ref->image_block);
     assert(block_it != m_block_to_tids.end());
     if (block_it->second == tid) {
       m_block_to_tids.erase(block_it);
@@ -395,9 +397,7 @@ void JournalStore<I>::commit_event(uint64_t tid, Context *on_finish) {
   Event event;
   event.fields.io_type = event_ref->io_type;
   event.fields.demoted = event_ref->demoted;
-  // event.fields.allocated = event_ref->demoted;
-  // modified by dingl
-  event.fields.allocated = event_ref->allocated;
+  event.fields.allocated = event_ref->demoted;
   event.fields.committed = true;
 
   Context *ctx = new FunctionContext(
@@ -424,10 +424,9 @@ void JournalStore<I>::commit_event(uint64_t tid, Context *on_finish) {
           m_tid_to_event_refs.erase(ref);//add by dingl
           ++m_event_ref_commit_iter;
           if (m_event_ref_commit_iter == m_event_refs.end()) {//add by dingl
-               lderr(cct) << "iterator m_event_ref_commit_iter reach the end of the list" << dendl;
-	       m_event_ref_commit_iter = m_event_refs.begin();
-	    }
-
+          	derr(cct) << "iterator m_event_ref_commit_iter reach the end of the list" << dendl;
+	       	m_event_ref_commit_iter = m_event_refs.begin();
+	      }
         }
       }
 
