@@ -173,13 +173,14 @@ struct C_ReadFromCacheRequest : public C_BlockIORequest {
   ImageStore<I> &image_store;
   BlockGuard::BlockIO block_io;
   ExtentBuffers *extent_buffers;
+  uint64_t cache_block_id;//add by dingl
 
   C_ReadFromCacheRequest(CephContext *cct, ImageStore<I> &image_store,
-                         BlockGuard::BlockIO &&block_io,
+                         BlockGuard::BlockIO &&block_io, uint64_t cache_block, 
                          ExtentBuffers *extent_buffers,
                          C_BlockIORequest *next_block_request)
     : C_BlockIORequest(cct, next_block_request),
-      image_store(image_store), block_io(block_io),
+      image_store(image_store), block_io(block_io), cache_block_id(cache_block), 
       extent_buffers(extent_buffers) {
   }
 
@@ -188,10 +189,15 @@ struct C_ReadFromCacheRequest : public C_BlockIORequest {
                    << "block_io=[" << block_io << "]" << dendl;
     C_Gather *ctx = new C_Gather(cct, this);
     for (auto &extent : block_io.extents) {
-      image_store.read_block(block_io.block,
+      /*image_store.read_block(block_io.block,
                              {{extent.block_offset, extent.block_length}},
                              &(*extent_buffers)[extent.buffer_offset],
-                             ctx->new_sub());
+                             ctx->new_sub());*/
+      //read data from cache block, add by dingl
+      image_store.read_block(cache_block_id,
+                             {{extent.block_offset, extent.block_length}},
+                             &(*extent_buffers)[extent.buffer_offset],
+                             ctx->new_sub());                       
     }
     ctx->activate();
   }
@@ -502,7 +508,8 @@ struct C_ReadBlockRequest : public BlockGuard::C_BlockRequest {
   }
 
   virtual void remap(PolicyMapResult policy_map_result,
-                     BlockGuard::BlockIO &&block_io, uint64_t replace_block) {
+                     BlockGuard::BlockIO &&block_io, uint64_t cache_block, 
+                     uint64_t replace_image_block) {
     assert(block_io.tid == 0);
     CephContext *cct = image_ctx.cct;
 
@@ -514,8 +521,11 @@ struct C_ReadBlockRequest : public BlockGuard::C_BlockRequest {
                                                          release_block, this);
     switch (policy_map_result) {
     case POLICY_MAP_RESULT_HIT:
+      /*req = new C_ReadFromCacheRequest<I>(cct, image_store, std::move(block_io),
+                                          &extent_buffers, req);*/
+      //modified by dingl
       req = new C_ReadFromCacheRequest<I>(cct, image_store, std::move(block_io),
-                                          &extent_buffers, req);
+                                          cache_block, &extent_buffers, req);                                   
       break;
     case POLICY_MAP_RESULT_MISS:
       req = new C_ReadFromImageRequest<I>(cct, image_writeback,
@@ -527,7 +537,10 @@ struct C_ReadBlockRequest : public BlockGuard::C_BlockRequest {
       promote_buffers.emplace_back();
       req = new C_CopyFromBlockBuffer(cct, block_io, promote_buffers.back(),
                                       &extent_buffers, req);
-      req = new C_PromoteToCache<I>(cct, image_store, block_io,
+      /*req = new C_PromoteToCache<I>(cct, image_store, block_io,
+                                    promote_buffers.back(), req);*/
+      //modified by dingl
+      req = new C_PromoteToCache<I>(cct, image_store, block_io, cache_block, 
                                     promote_buffers.back(), req);
       req = new C_ReadBlockFromImageRequest<I>(cct, image_writeback,
                                                block_io.block,
@@ -535,9 +548,9 @@ struct C_ReadBlockRequest : public BlockGuard::C_BlockRequest {
       if (policy_map_result == POLICY_MAP_RESULT_REPLACE) {
         //req = new C_DemoteFromCache<I>(cct, image_store, release_block,
          //                              block_io.block, req);
-         //modified by dingl
+         ////Just release the detained block in policy when replace, add by dingl
         req = new C_DemoteFromCache<I>(cct, image_store, release_block,
-                                       replace_block, req);
+                                       replace_image_block, req);
       }
       break;
     default:
@@ -642,11 +655,14 @@ struct C_WriteBlockRequest : BlockGuard::C_BlockRequest {
 
         if (block_io.tid > 0 && (1 == policy.get_write_mode())) {
           req = new C_AppendEventToJournal<I>(cct, journal_store, block_io.tid,
-                                              block_io.block, IO_TYPE_WRITE,
-                                              req);
+                                              block_io.block, cache_block,//modified by dingl 
+                                              IO_TYPE_WRITE, req);
         }
-        req = new C_PromoteToCache<I>(cct, image_store, block_io,
-                                      promote_buffers.back(), req);
+        /*req = new C_PromoteToCache<I>(cct, image_store, block_io,
+                                      promote_buffers.back(), req);*/
+        //modified by dingl
+        req = new C_PromoteToCache<I>(cct, image_store, block_io, cache_block, 
+                                      promote_buffers.back(), req);                              
         req = new C_ModifyBlockBuffer(cct, block_io, bl,
                                       &promote_buffers.back(), req);
         if (policy_map_result == POLICY_MAP_RESULT_HIT) {
@@ -656,8 +672,13 @@ struct C_WriteBlockRequest : BlockGuard::C_BlockRequest {
                                                 block_io.block,
                                                 promote_buffers.back(), req);
           }
-          req = new C_ReadBlockFromCacheRequest<I>(cct, image_store,
+          /*req = new C_ReadBlockFromCacheRequest<I>(cct, image_store,
                                                    block_io.block, BLOCK_SIZE,
+                                                   &promote_buffers.back(),
+                                                   req);*/
+          //read from cache block,modify by dingl
+          req = new C_ReadBlockFromCacheRequest<I>(cct, image_store,
+                                                   cache_block, BLOCK_SIZE,
                                                    &promote_buffers.back(),
                                                    req);
         } else {
