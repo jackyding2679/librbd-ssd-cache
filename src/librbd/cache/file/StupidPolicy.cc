@@ -21,20 +21,20 @@ template <typename I>
 StupidPolicy<I>::StupidPolicy(I &image_ctx, BlockGuard &block_guard)
   : m_image_ctx(image_ctx), m_block_guard(block_guard),
     m_lock("librbd::cache::file::StupidPolicy::m_lock"),
-    m_image_block_cout(m_image_ctx.size / BLOCK_SIZE), 
-    m_cache_block_cout(m_image_ctx.ssd_cache_size / BLOCK_SIZE) {
-
+    m_image_block_count(m_image_ctx.size / BLOCK_SIZE), 
+    m_cache_block_count(m_image_ctx.ssd_cache_size / BLOCK_SIZE) {
+    CephContext *cct = image_ctx.cct;
 	uint64_t cache_block_id = 0;
 
   // TODO support resizing of entries based on number of provisioned blocks
   //m_entries.resize(m_image_ctx.ssd_cache_size / BLOCK_SIZE); // 1GB of storage
-  m_entries.resize(m_cache_block_cout); 
+  m_entries.resize(m_cache_block_count); 
   for (auto &entry : m_entries) {
     m_free_lru.insert_tail(&entry);
   	entry.cache_block = cache_block_id;//modified by dingl
 	++cache_block_id;
   }
-   ldout(cct, 5) << "cache_block_id is" << cache_block_id << dendl;
+  ldout(cct, 5) << "cache_block_id is:" << cache_block_id << dendl;
 }
 
 template <typename I>
@@ -170,9 +170,11 @@ int StupidPolicy<I>::get_writeback_block(uint64_t *block) {
     return -ENODATA;
   }
 
-  int r = m_block_guard.detain(entry->block, nullptr);
+  //int r = m_block_guard.detain(entry->block, nullptr);
+  //modified by dingl
+  int r = m_block_guard.detain(entry->image_block, nullptr);
   if (r < 0) {
-    ldout(cct, 20) << "dirty block " << entry->block << " already detained"
+    ldout(cct, 20) << "dirty block " << entry->image_block << " already detained"
                    << dendl;
     return -EBUSY;
   }
@@ -185,8 +187,10 @@ int StupidPolicy<I>::get_writeback_block(uint64_t *block) {
   m_dirty_lru.remove(entry);
   m_clean_lru.insert_head(entry);
 
-  *block = entry->block;
-  ldout(cct, 20) << "block=" << *block << dendl;
+  //*block = entry->block;
+  //modified by dingl
+  *block = entry->image_block;
+  ldout(cct, 20) << "image_block=" << *block << dendl;
   return 0;
 }
 
@@ -199,7 +203,7 @@ int StupidPolicy<I>::map(IOType io_type, uint64_t block, bool partial_block,
 
   Mutex::Locker locker(m_lock);
  // if (block >= m_block_count) {
-  if (block >= m_image_block_cout) {
+  if (block >= m_image_block_count) {
     lderr(cct) << "block outside of valid range" << dendl;
     *policy_map_result = POLICY_MAP_RESULT_MISS;
     // TODO return error once resize handling is in-place
@@ -327,7 +331,7 @@ void StupidPolicy<I>::bufferlist_to_entry(bufferlist &bl){
 		entry.decode(it);
 		is_dirty = entry.dirty;
 		cache_block = entry.cache_block;
-		if (cache_block < 0 || (cache_block > m_cache_block_cout - 1)) {
+		if (cache_block < 0 || (cache_block > m_cache_block_count - 1)) {
 			lderr(cct) << "cache block id out of range, block:" << cache_block << dendl;
 			assert(false);
 		}
@@ -341,8 +345,11 @@ void StupidPolicy<I>::bufferlist_to_entry(bufferlist &bl){
 		} else {
 			m_clean_lru.insert_head(&entry_it);
 		}
+		entry_it.cache_block = entry.cache_block;
+		entry_it.image_block = entry.image_block;
+		entry_it.dirty = entry.dirty;
 		//Update the block_to_entries map
-		m_block_to_entries[cache_block] = &entry;
+		m_block_to_entries[cache_block] = &entry_it;
 	}
   //CephContext *cct = m_image_ctx.cct;
   //ldout(cct, 20) << "Total load " << entry_index << " entries" << dendl;

@@ -21,6 +21,8 @@ MetaStore<I>::MetaStore(I &image_ctx, uint32_t block_size)//modified by dingl
   : m_image_ctx(image_ctx), m_block_size(block_size),
     m_cache_file_size(image_ctx.ssd_cache_size), 
     m_meta_file(image_ctx, *image_ctx.op_work_queue, image_ctx.id + ".meta") {
+    CephContext *cct = m_image_ctx.cct;
+    ldout(cct, 20) << "m_cache_file_size is:" << m_cache_file_size << dendl;
 }
 
 template <typename I>
@@ -30,7 +32,7 @@ void MetaStore<I>::init(bufferlist *bl, Context *on_finish) {
 
   // TODO
   Context *ctx = new FunctionContext(
-    [this, bl, on_finish](int r) {
+    [this, bl, on_finish, cct](int r) {
       if (r < 0) {
         on_finish->complete(r);
         return;
@@ -39,7 +41,9 @@ void MetaStore<I>::init(bufferlist *bl, Context *on_finish) {
       if(m_meta_file.filesize() == 0) {
         reset(on_finish);
       } else {
+        ldout(cct, 20) << "begin load all"<< dendl;
         load_all(bl, on_finish);
+		ldout(cct, 20) << "end load all"<< dendl;
       }
     });
   m_meta_file.open(ctx);
@@ -98,26 +102,32 @@ void MetaStore<I>::load_all(bufferlist *bl, Context *on_finish) {
   ldout(cct, 20) << dendl;
   //1. get total file length
   Context *ctx = new FunctionContext(
-    [this, on_finish](int r) {
+    [this, on_finish, cct](int r) {
       if (r < 0) {
+	  	lderr(cct) << "error to read block" << dendl;
         on_finish->complete(r);
         return;
       }
   });
+  #if 0
   //for(uint64_t block_id = 0; block_id < offset_to_block(m_image_ctx.size); block_id++){//modyfied by dingl
   for(uint64_t block_id = 0; block_id < offset_to_block(m_cache_file_size); block_id++){
+  	  ldout(cct, 20) << "read block:" << block_id << dendl;
     //read_block(block_id, bl, ctx);
     //if (bl->is_zero()) break;
     //TO BE TEST
 	bufferlist bl_tmp;
-	read_block(block_id, bl_tmp, ctx);
-    if (bl_tmp->is_zero()) {
-		ldout(cct, 5) << "bufferlist is zero,skip this" << dendl; 
+	read_block(block_id, &bl_tmp, ctx);
+    if (bl_tmp.is_zero()) {
+		ldout(cct, 20) << "bufferlist is zero,skip this" << dendl; 
 		bl_tmp.clear();
 		continue;
     }
+	ldout(cct, 20) << "call claim_append" << dendl; 
 	bl->claim_append(bl_tmp);
+	ldout(cct, 20) << "call claim_append done" << dendl; 
   }
+  #endif
   on_finish->complete(0);
 }
 

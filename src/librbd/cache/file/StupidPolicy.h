@@ -74,8 +74,8 @@ private:
   mutable Mutex m_lock;
   //uint64_t m_block_count = 0;
   //modidied by dingl
-  uint64_t m_image_block_cout;
-  uint64_t m_cache_block_cout;
+  uint64_t m_image_block_count;
+  uint64_t m_cache_block_count;
 	
   uint8_t m_write_mode = 0; // 0:w-t, 1:w-b
 

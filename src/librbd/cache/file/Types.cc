@@ -3,6 +3,7 @@
 
 #include "librbd/cache/file/Types.h"
 #include "include/buffer_fwd.h"
+#include "common/Formatter.h"
 
 namespace librbd {
 namespace cache {
@@ -31,7 +32,7 @@ void Entry_t::dump(Formatter *f) const {
    f->dump_unsigned("cache_block", cache_block);
    f->dump_unsigned("image_block", image_block);
 }
-}
+}// namespace stupid_policy
 
 namespace meta_store {
 

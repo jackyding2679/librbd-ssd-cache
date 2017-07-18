@@ -244,14 +244,15 @@ struct C_ReadFromImageRequest : public C_BlockIORequest {
 template <typename I>
 struct C_WriteToMetaRequest : public C_BlockIORequest {
   MetaStore<I> &meta_store;
+  uint64_t image_block_id;
   uint64_t cache_block_id;
   Policy *policy;
 
   C_WriteToMetaRequest(CephContext *cct, MetaStore<I> &meta_store,
-		                uint64_t cache_block_id, Policy *policy,
-                        C_BlockIORequest *next_block_request)
+		                uint64_t image_block, uint64_t cache_block, 
+		                Policy *policy, C_BlockIORequest *next_block_request)
     : C_BlockIORequest(cct, next_block_request), meta_store(meta_store),
-    cache_block_id(cache_block_id), policy(policy) {
+    image_block_id(image_block), cache_block_id(cache_block), policy(policy) {
   }
 
   virtual void send() override {
@@ -259,7 +260,7 @@ struct C_WriteToMetaRequest : public C_BlockIORequest {
                    << "cache_block_id=" << cache_block_id << dendl;
 
     bufferlist meta_bl;
-    policy->entry_to_bufferlist(cache_block_id, &meta_bl);
+    policy->entry_to_bufferlist(image_block_id, &meta_bl);
     ldout(cct, 20) << "entry_to_bufferlist bl:" << meta_bl << dendl;
     meta_store.write_block(cache_block_id, std::move(meta_bl), this);
   }
@@ -449,7 +450,8 @@ struct C_AppendEventToJournal : public C_BlockIORequest {
   virtual void send() override {
     ldout(cct, 20) << "(" << get_name() << "): "
                    << "tid=" << tid << ", "
-                   << "block=" << block << ", "
+                   << "image_block=" << image_block_id << ", "
+                   << "cache_block=" << cache_block_id << ", "
                    << "io_type=" << io_type << dendl;
     //journal_store.append_event(tid, block, io_type, this);
     //modified by dingl
@@ -632,7 +634,8 @@ struct C_WriteBlockRequest : BlockGuard::C_BlockRequest {
       }
       //req = new C_WriteToMetaRequest<I>(cct, meta_store, block_io.block, &policy, req);
       //Write metadata to cache_block
-	  req = new C_WriteToMetaRequest<I>(cct, meta_store, cache_block, &policy, req);
+	  req = new C_WriteToMetaRequest<I>(cct, meta_store, block_io.block, 
+	  											cache_block, &policy, req);
 	  
       IOType io_type = static_cast<IOType>(block_io.io_type);
       if ((io_type == IO_TYPE_WRITE || io_type == IO_TYPE_DISCARD) &&
@@ -850,12 +853,16 @@ struct C_WritebackRequest : public Context {
     ldout(cct, 20) << "r=" << r << dendl;
 
     if (r < 0) {
-      lderr(cct) << "failed to writeback block " << block << ": "
+      lderr(cct) << "failed to writeback block " << image_block_id << ": "
                  << cpp_strerror(r) << dendl;
-      policy.set_dirty(block);
+      //policy.set_dirty(block);
+      //modified by dingl
+      policy.set_dirty(image_block_id);
     }
 
-    release_block(block);
+    //release_block(block);
+    //modified by dingl
+    release_block(image_block_id);
   }
 };
 
@@ -1150,9 +1157,10 @@ void FileImageCache<I>::map_block(bool detain_block,
   int r;
   if (detain_block) {
 	//add by dingl
-      ldout(cct, 5) << "detain block, deferred block size:" << m_deferred_block_ios.size()
-       << ",detained block size:" << m_block_guard.get_detained_block_size()
-       << ",free detained block size:" << m_block_guard.get_free_detained_block_size() << dendl;
+    ldout(cct, 5) << "detain block:" << block_io.block <<", deferred block size:"
+      << m_deferred_block_ios.size() << ",detained block size:" 
+      << m_block_guard.get_detained_block_size() << ",free detained block size:"
+      << m_block_guard.get_free_detained_block_size() << dendl;
     r = m_block_guard.detain(block_io.block, &block_io);
     if (r < 0) {
       Mutex::Locker locker(m_lock);
@@ -1190,15 +1198,15 @@ void FileImageCache<I>::release_block(uint64_t block) {
   ldout(cct, 20) << "block=" << block << dendl;
 
   //add by dingl
-  ldout(cct, 5) << "before release, deferred block size:" << m_deferred_block_ios.size()
-       << ",detained block size:" << m_block_guard.get_detained_block_size()
-       << ",free detained block size:" << m_block_guard.get_free_detained_block_size() << dendl;
+  //ldout(cct, 5) << "before release, deferred block size:" << m_deferred_block_ios.size()
+    //   << ",detained block size:" << m_block_guard.get_detained_block_size()
+   //    << ",free detained block size:" << m_block_guard.get_free_detained_block_size() << dendl;
 
   Mutex::Locker locker(m_lock);
   m_block_guard.release(block, &m_detained_block_ios);
-  ldout(cct, 5) << "after release, deferred block size:" << m_deferred_block_ios.size()
-       << ",detained block size:" << m_block_guard.get_detained_block_size()
-       << ",free detained block size:" << m_block_guard.get_free_detained_block_size() << dendl;
+  //ldout(cct, 5) << "after release, deferred block size:" << m_deferred_block_ios.size()
+  //     << ",detained block size:" << m_block_guard.get_detained_block_size()
+  //     << ",free detained block size:" << m_block_guard.get_free_detained_block_size() << dendl;
   wake_up();
 }
 
@@ -1292,7 +1300,8 @@ void FileImageCache<I>::process_writeback_dirty_blocks() {
                  << cpp_strerror(r) << dendl;
       return;
     }
-
+	 ldout(cct, 5) << "image_block=" << image_block << ", cache_block=" 
+	 		<< cache_block << dendl;
     // block is now detained -- safe for writeback
     C_WritebackRequest<I> *req = new C_WritebackRequest<I>(
       m_image_ctx, m_image_writeback, *m_policy, *m_journal_store,

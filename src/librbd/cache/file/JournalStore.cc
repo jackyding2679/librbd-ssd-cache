@@ -147,10 +147,11 @@ int JournalStore<I>::allocate_tid(uint64_t *tid) {
 
 template <typename I>
 void JournalStore<I>::append_event(uint64_t tid, uint64_t image_block,
-					uint64 cache_block, IOType io_type, Context *on_finish) {
+					uint64_t cache_block, IOType io_type, Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "tid=" << tid << ", "
-                 << "block=" << block << ", "
+                 << "image_block=" << image_block << ", "
+                 << "cache_block=" << cache_block << ", "
                  << "io_type=" << io_type << dendl;
 
   EventRef *event_ref;
@@ -361,7 +362,7 @@ void JournalStore<I>::get_writeback_block(uint64_t tid, bufferlist *bl,
 template <typename I>
 void JournalStore<I>::commit_event(uint64_t tid, Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
-  ldout(cct, 20) << "tid=" << tid << dendl;
+  ldout(cct, 5) << "tid=" << tid << dendl;
   //ldout(cct, -1) << "tid=" << tid << dendl;
 
   EventRef *event_ref;
@@ -400,6 +401,8 @@ void JournalStore<I>::commit_event(uint64_t tid, Context *on_finish) {
   event.fields.allocated = event_ref->demoted;
   event.fields.committed = true;
 
+  //ldout(cct, 5) << "test1------------" << dendl;
+
   Context *ctx = new FunctionContext(
     [this, event_ref, on_finish, cct](int r) {
       Context *next_ctx = on_finish;
@@ -410,7 +413,7 @@ void JournalStore<I>::commit_event(uint64_t tid, Context *on_finish) {
             on_finish->complete(r);
           });
       }
-
+     // ldout(cct, 5) << "test3------------" << dendl;
       {
         Mutex::Locker locker(m_lock);
         event_ref->event_state = EVENT_STATE_COMMITTED;
@@ -424,7 +427,7 @@ void JournalStore<I>::commit_event(uint64_t tid, Context *on_finish) {
           m_tid_to_event_refs.erase(ref);//add by dingl
           ++m_event_ref_commit_iter;
           if (m_event_ref_commit_iter == m_event_refs.end()) {//add by dingl
-          	derr(cct) << "iterator m_event_ref_commit_iter reach the end of the list" << dendl;
+          	lderr(cct) << "iterator m_event_ref_commit_iter reach the end of the list" << dendl;
 	       	m_event_ref_commit_iter = m_event_refs.begin();
 	      }
         }
@@ -454,7 +457,8 @@ void JournalStore<I>::commit_event(uint64_t tid, Context *on_finish) {
         m_event_file.write(event_offset, std::move(event_bl), false, next_ctx);
       });
     ctx = new FunctionContext(
-      [this, block, ctx](int r) {
+     // [this, block, ctx](int r) {
+      [this, block_offset, ctx](int r) {
         Context *next_ctx = ctx;
         if (r < 0) {
           next_ctx = new FunctionContext(
@@ -468,6 +472,8 @@ void JournalStore<I>::commit_event(uint64_t tid, Context *on_finish) {
         m_block_file.discard(block_offset * m_block_size, m_block_size, true, next_ctx);
       });
   }
+
+ //ldout(cct, 5) << "test2------------" << dendl;
 
   // TODO throttle commit updates
   bufferlist event_bl;

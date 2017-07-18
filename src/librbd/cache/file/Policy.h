@@ -33,9 +33,9 @@ public:
   virtual void clear_dirty(uint64_t block) = 0;
 
   virtual int get_writeback_block(uint64_t *block) = 0;
-
+  //modified by dingl
   virtual int map(IOType io_type, uint64_t block, bool partial_block,
-                  PolicyMapResult *policy_map_result,
+                  PolicyMapResult *policy_map_result, uint64_t *cache_block, 
                   uint64_t *replace_cache_block) = 0;
   virtual void tick() = 0;
 
