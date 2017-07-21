@@ -33,6 +33,8 @@ public:
 
   void read(uint64_t offset, uint64_t length, ceph::bufferlist *bl,
             Context *on_finish);
+  //sync read, add by dingl
+  int read_sync(uint64_t offset, uint64_t length, ceph::bufferlist *bl);
   void write(uint64_t offset, ceph::bufferlist &&bl, bool fdatasync,
              Context *on_finish);
   void discard(uint64_t offset, uint64_t length,

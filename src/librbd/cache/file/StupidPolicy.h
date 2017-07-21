@@ -50,10 +50,16 @@ public:
   virtual void tick();
   virtual int get_entry_size();
   virtual void entry_to_bufferlist(uint64_t block, bufferlist *bl);
-  virtual void bufferlist_to_entry(bufferlist &bl);
+  //virtual void bufferlist_to_entry(bufferlist &bl);
+  //modified by dingl
+  virtual void bufferlist_to_entry(bufferlist *bl);
+
+  //add by dingl
+  void dump_entry(Entry_t *e, int log_level);
 
 private:
 
+	CephContext *cct;//add by dingl
  /* struct Entry : public LRUObject {
     uint64_t block = 0;
     bool dirty = false;

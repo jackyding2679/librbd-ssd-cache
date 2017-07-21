@@ -42,7 +42,9 @@ public:
   virtual int get_entry_size() = 0;
 
   virtual void entry_to_bufferlist(uint64_t block, bufferlist *bl) = 0;
-  virtual void bufferlist_to_entry(bufferlist &bl) = 0;
+  //virtual void bufferlist_to_entry(bufferlist &bl) = 0;
+  //modified by dingl
+  virtual void bufferlist_to_entry(bufferlist *bl) = 0;
 
 
 };

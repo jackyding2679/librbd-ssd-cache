@@ -6,6 +6,7 @@
 #include "librbd/ImageCtx.h"
 #include "librbd/cache/BlockGuard.h"
 
+#define dout_context cct
 #define dout_subsys ceph_subsys_rbd
 #undef dout_prefix
 #define dout_prefix *_dout << "librbd::cache::file::StupidPolicy: " << this \
@@ -19,7 +20,8 @@ namespace file {
 
 template <typename I>
 StupidPolicy<I>::StupidPolicy(I &image_ctx, BlockGuard &block_guard)
-  : m_image_ctx(image_ctx), m_block_guard(block_guard),
+  : cct(image_ctx.cct), 
+    m_image_ctx(image_ctx), m_block_guard(block_guard),
     m_lock("librbd::cache::file::StupidPolicy::m_lock"),
     m_image_block_count(m_image_ctx.size / BLOCK_SIZE), 
     m_cache_block_count(m_image_ctx.ssd_cache_size / BLOCK_SIZE) {
@@ -287,7 +289,15 @@ void StupidPolicy<I>::tick() {
 
 template <typename I>
 int StupidPolicy<I>::get_entry_size() {
-  return sizeof(struct Entry);
+  //return sizeof(struct Entry); 
+  //shouldn't return sizeof(Entry), modified by dingl
+  bufferlist bl;
+  Entry_t e;
+  e.dirty = false;
+  e.image_block = 0;
+  e.cache_block = 0;
+  e.encode(bl);
+  return bl.length();
 }
 
 template <typename I>
@@ -309,34 +319,40 @@ void StupidPolicy<I>::entry_to_bufferlist(uint64_t block, bufferlist *bl){
 }
 
 template <typename I>
-void StupidPolicy<I>::bufferlist_to_entry(bufferlist &bl){
+void StupidPolicy<I>::bufferlist_to_entry(bufferlist *bl){
 	CephContext *cct = m_image_ctx.cct;
 
 	Mutex::Locker locker(m_lock);
-	JSONFormatter f(false);
  // uint64_t entry_index = 0;
   //TODO
   //TODO-add to dirty list-add by dingl
 	Entry_t entry;
   //for (bufferlist::iterator it = bl.begin(); it != bl.end(); ++it) {
-  /*When using encode and iterator at the same time,it shouldn't use operator++*/
-	for (bufferlist::iterator it = bl.begin(); it != bl.end();) {
+  /*When using encode and iterator at the same time,we shouldn't use operator++*/
+	for (bufferlist::iterator it = bl->begin(); it != bl->end();) {
 		//entry.decode(it);
 		//auto entry_it = m_entries[entry_index++];
 		//entry_it.block = entry.block;
 		//entry_it.dirty = entry.dirty;
 		bool is_dirty;
 		uint64_t cache_block;
+		uint64_t image_block;
 
 		entry.decode(it);
 		is_dirty = entry.dirty;
+		image_block = entry.image_block;
 		cache_block = entry.cache_block;
+		
+		if (image_block < 0 || (image_block > m_image_block_count - 1)) {
+			lderr(cct) << "invalid image block " << image_block << dendl;
+			assert(false);
+		}
 		if (cache_block < 0 || (cache_block > m_cache_block_count - 1)) {
-			lderr(cct) << "cache block id out of range, block:" << cache_block << dendl;
+			lderr(cct) << "invalid cache block " << cache_block << dendl;
 			assert(false);
 		}
 		//Debug
-		entry.dump(&f);
+		dump_entry(&entry, 6);
 		auto entry_it = m_entries[cache_block];
 		//Remove from the free lru list, and insert to the corresponding list
 		m_free_lru.remove(&entry_it);
@@ -349,12 +365,29 @@ void StupidPolicy<I>::bufferlist_to_entry(bufferlist &bl){
 		entry_it.image_block = entry.image_block;
 		entry_it.dirty = entry.dirty;
 		//Update the block_to_entries map
-		m_block_to_entries[cache_block] = &entry_it;
+		m_block_to_entries[image_block] = &entry_it;
 	}
+	//debug
+	ldout(cct, 6) << "m_free_lru size " << m_free_lru.get_length()
+				  << " m_dirty_lru size " << m_dirty_lru.get_length()
+				  << " m_clean_lru size " << m_clean_lru.get_length() << dendl;
   //CephContext *cct = m_image_ctx.cct;
   //ldout(cct, 20) << "Total load " << entry_index << " entries" << dendl;
-
 }
+
+//dump Entry_t, add by dingl
+template <typename I>
+void StupidPolicy<I>::dump_entry(Entry_t *e, int log_level)
+{
+	dout(log_level) << " Entry_t dump:\n";
+	JSONFormatter f(false);
+	f.open_object_section("Entry_t");
+	e->dump(&f);
+	f.close_section();
+	f.flush(*_dout);
+	*_dout << dendl;
+}
+
 
 } // namespace file
 } // namespace cache

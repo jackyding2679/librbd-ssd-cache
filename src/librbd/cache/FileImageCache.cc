@@ -1026,7 +1026,9 @@ void FileImageCache<I>::init(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
 
-  bufferlist meta_bl;
+  //bufferlist meta_bl;
+  //this would cause stack overflow, so we use operator new, add by dingl
+  bufferlist *meta_bl = new bufferlist();
   // chain the initialization of the meta, image, and journal stores
   Context *ctx = new FunctionContext(
     [this, on_finish](int r) {
@@ -1060,10 +1062,14 @@ void FileImageCache<I>::init(Context *on_finish) {
       m_image_store = new ImageStore<I>(m_image_ctx, *m_meta_store);
       m_image_store->init(ctx);
 
+	  //we don't need meta_bl any more,add by dingl 
+	  delete meta_bl;
     });
   m_meta_store = new MetaStore<I>(m_image_ctx, BLOCK_SIZE);
   m_meta_store->set_entry_size(m_policy->get_entry_size());
-  m_meta_store->init(&meta_bl, ctx);
+  //m_meta_store->init(&meta_bl, ctx);
+  //modified by dingl
+  m_meta_store->init(meta_bl, ctx);
 }
 
 template <typename I>

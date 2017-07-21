@@ -28,6 +28,7 @@ public:
   void reset(Context *on_finish);
   void write_block(uint64_t cache_block, bufferlist bl, Context *on_finish);
   void read_block(uint64_t cache_block, bufferlist *bl, Context *on_finish);
+  int read_block_sync(uint64_t cache_block, bufferlist *bl);
   void load_all(bufferlist* bl, Context *on_finish);
   void shut_down(Context *on_finish);
 

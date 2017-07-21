@@ -26,6 +26,7 @@ namespace file {
 namespace stupid_policy {
 
 struct Entry_t {
+  //static const size_t ENCODED_SIZE = 32;
   bool dirty = false;
   uint64_t cache_block = 0;//modified by dingl
   uint64_t image_block = 0;

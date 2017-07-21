@@ -126,6 +126,14 @@ void AioFile<I>::read(uint64_t offset, uint64_t length, ceph::bufferlist *bl,
     }));
 }
 
+//sync read, add by dingl
+template <typename I>
+int AioFile<I>::read_sync(uint64_t offset, uint64_t length, ceph::bufferlist *bl)
+{
+  return read(offset, length, bl);
+}
+
+
 template <typename I>
 void AioFile<I>::write(uint64_t offset, ceph::bufferlist &&bl,
                        bool fdatasync, Context *on_finish) {

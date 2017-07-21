@@ -96,9 +96,19 @@ void MetaStore<I>::read_block(uint64_t cache_block, bufferlist *bl, Context *on_
   m_meta_file.read(meta_block_offset, m_entry_size, bl, on_finish);
 }
 
+//read block sync, add by dingl
+template <typename I>
+int MetaStore<I>::read_block_sync(uint64_t cache_block, bufferlist *bl) {
+  CephContext *cct = m_image_ctx.cct;
+  //ldout(cct, 20) << dendl;
+  uint64_t meta_block_offset = cache_block * m_entry_size;
+  return m_meta_file.read_sync(meta_block_offset, m_entry_size, bl);
+}
+
 template <typename I>
 void MetaStore<I>::load_all(bufferlist *bl, Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
+  uint64_t valid_block_count = 0;
   ldout(cct, 20) << dendl;
   //1. get total file length
   Context *ctx = new FunctionContext(
@@ -109,25 +119,39 @@ void MetaStore<I>::load_all(bufferlist *bl, Context *on_finish) {
         return;
       }
   });
-  #if 0
   //for(uint64_t block_id = 0; block_id < offset_to_block(m_image_ctx.size); block_id++){//modyfied by dingl
   for(uint64_t block_id = 0; block_id < offset_to_block(m_cache_file_size); block_id++){
-  	  ldout(cct, 20) << "read block:" << block_id << dendl;
     //read_block(block_id, bl, ctx);
     //if (bl->is_zero()) break;
     //TO BE TEST
 	bufferlist bl_tmp;
-	read_block(block_id, &bl_tmp, ctx);
+	int ret;
+
+	ldout(cct, 20) << "read block:" << block_id<< dendl; 
+	ret = read_block_sync(block_id, &bl_tmp);
+	if (ret < 0) {
+		lderr(cct) << "error to read block:" << block_id << dendl;
+		on_finish->complete(ret);
+		return;
+	}
     if (bl_tmp.is_zero()) {
 		ldout(cct, 20) << "bufferlist is zero,skip this" << dendl; 
 		bl_tmp.clear();
 		continue;
     }
-	ldout(cct, 20) << "call claim_append" << dendl; 
+	++valid_block_count;
+	ldout(cct, 20) << "read block " << block_id << " done, bl_tmp size is " <<
+		bl_tmp.length() << ", buffer count " << bl_tmp.get_num_buffers()<< dendl; 
 	bl->claim_append(bl_tmp);
-	ldout(cct, 20) << "call claim_append done" << dendl; 
+	ldout(cct, 20) << "after claim " << block_id 
+		<< " done, bl_tmp size is " <<bl_tmp.length() 
+		<< ", bl_tmp buffer count " << bl_tmp.get_num_buffers()<< dendl; 
+	ldout(cct, 20) << "bl size is " << bl->length() << ", bl buffer count " 
+					<< bl->get_num_buffers()<< dendl; 
   }
-  #endif
+  ldout(cct, 6) << "valid block count " << valid_block_count 
+  						<< ",bl buffer length " << bl->length()  
+  					<< ",bl buffer count " << bl->get_num_buffers() << dendl; 
   on_finish->complete(0);
 }
 

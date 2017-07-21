@@ -11,11 +11,13 @@ namespace file {
 
 namespace stupid_policy {
 void Entry_t::encode(bufferlist& bl) const {
+  //size_t start_offset = bl.end().get_off();
   ENCODE_START(1, 1, bl);
   ::encode(dirty, bl);
   ::encode(cache_block, bl);//modified by dingl
   ::encode(image_block, bl);
   ENCODE_FINISH(bl);
+  //assert(bl.length() - start_offset <= ENCODED_SIZE);
 }
 
 void Entry_t::decode(bufferlist::iterator& it) {
@@ -29,8 +31,8 @@ void Entry_t::decode(bufferlist::iterator& it) {
 //add by dingl
 void Entry_t::dump(Formatter *f) const {
    f->dump_bool("dirty", dirty);
-   f->dump_unsigned("cache_block", cache_block);
    f->dump_unsigned("image_block", image_block);
+   f->dump_unsigned("cache_block", cache_block);
 }
 }// namespace stupid_policy
 
