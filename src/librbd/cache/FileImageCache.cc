@@ -1037,6 +1037,11 @@ void FileImageCache<I>::init(Context *on_finish) {
         m_policy->set_block_count(
           m_meta_store->offset_to_block(m_image_ctx.size));
       }
+      //
+	  if (event_bl->length() > 0) {
+		 
+	  }
+	  
       on_finish->complete(r);
     });
   ctx = new FunctionContext(
@@ -1049,7 +1054,9 @@ void FileImageCache<I>::init(Context *on_finish) {
       // TODO: do not enable journal store if writeback disabled
       m_journal_store = new JournalStore<I>(m_image_ctx, m_block_guard,
                                             *m_meta_store);
-      m_journal_store->init(ctx);
+      //m_journal_store->init(ctx);
+      //add by dingl
+      m_journal_store->init(event_bl, ctx);
     });
   ctx = new FunctionContext(
     [this, meta_bl, ctx](int r) mutable {
@@ -1396,6 +1403,30 @@ void FileImageCache<I>::flush(Context *on_finish) {
   // in-flight IO is flushed
   //aio_flush(on_finish);
 }
+
+//commit event,add by dingl
+template <typename I>
+void FileImageCache<I>::commit_journal(bufferlist *bl) {
+
+	for(bufferlist::iterator it = bl->begin(); it != bl->end(); ) {
+		Event e;
+		uint64_t tid;
+		uint64_t image_block;
+		uint64_t cache_block;
+		IOType io_type;
+		bool demote;
+
+		e.decode(it);
+		tid = e.tid;
+		image_block = e.image_block;
+		cache_block = e.cache_block;
+		io_type = e.io_type;
+		demote = e.fields.demote;
+
+
+	}
+}
+
 
 } // namespace cache
 } // namespace librbd

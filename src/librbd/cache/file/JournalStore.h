@@ -32,7 +32,8 @@ public:
   JournalStore(ImageCtxT &image_ctx, BlockGuard &block_guard,
                MetaStore<ImageCtxT> &metastore);
 
-  void init(Context *on_finish);
+  //void init(Context *on_finish);
+  void init(bufferlist *bl, Context *on_finish);
   void shut_down(Context *on_finish);
   void reset(Context *on_finish);
 
@@ -79,6 +80,10 @@ public:
   						uint64_t *cache_block, IOType *io_type, bool *demoted);
   void get_writeback_block(uint64_t tid, bufferlist *bl, Context *on_finish);
   void commit_event(uint64_t tid, Context *on_finish);
+  //add by dingl
+  void set_encoded_event_size();
+  void load_events(bufferlist *bl, Context *on_finish);
+  void dump_event(Event *e, int log_level);
 
 private:
   static const uint64_t INVALID_IMAGE_BLOCK = static_cast<uint64_t>(-1);
@@ -144,6 +149,12 @@ private:
 
   /// most recent uncommitted event associated with a block
   BlockToTids m_block_to_tids;
+
+  //when crash,we should commit all "un-commited envents" before
+  //we accept client IO.add by dingl
+  bool m_need_commit_journal;
+  uint32_t encoded_event_size;
+  CephContext *cct;
 };
 
 } // namespace file

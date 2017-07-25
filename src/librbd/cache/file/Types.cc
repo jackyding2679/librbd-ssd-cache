@@ -97,6 +97,11 @@ void Event::dump(Formatter *f) const {
   f->dump_unsigned("tid", tid);//add by dingl
   f->dump_unsigned("image_block", image_block);
   f->dump_unsigned("cache_block", cache_block);
+  f->dump_unsigned("crc", crc);
+  f->dump_unsigned("io_type", fields.io_type);
+  f->dump_bool("demoted", fields.demoted);
+  f->dump_bool("committed", fields.committed);
+  f->dump_bool("allocated", fields.allocated);
 }
 
 void Event::generate_test_instances(std::list<Event *> &o) {

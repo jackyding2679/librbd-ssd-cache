@@ -8,6 +8,7 @@
 #include "librbd/cache/file/MetaStore.h"
 #include "librbd/cache/file/Types.h"
 
+#define dout_context cct
 #define dout_subsys ceph_subsys_rbd
 #undef dout_prefix
 #define dout_prefix *_dout << "librbd::cache::file::JournalStore: " << this \
@@ -36,8 +37,8 @@ JournalStore<I>::JournalStore(I &image_ctx, BlockGuard &block_guard,
                  image_ctx.id + ".journal_events"),
     m_block_file(image_ctx, *image_ctx.op_work_queue,
                  image_ctx.id + ".journal_blocks"),
-    m_lock("librbd::cache::file::JournalStore::m_lock") {
-  CephContext *cct = m_image_ctx.cct;
+    m_lock("librbd::cache::file::JournalStore::m_lock"), cct(image_ctx.cct){
+ // CephContext *cct = m_image_ctx.cct;
   m_ring_buf_cnt = cct->_conf->rbd_persistent_cache_journal_ring_buffer_count;
   m_event_ref_cnt = cct->_conf->rbd_persistent_cache_journal_event_ref_count;
   m_block_size = cct->_conf->rbd_persistent_cache_journal_block_size;
@@ -50,10 +51,13 @@ JournalStore<I>::JournalStore(I &image_ctx, BlockGuard &block_guard,
   m_event_ref_alloc_iter = m_event_refs.begin();
   m_event_ref_writeback_iter = m_event_refs.begin();
   m_event_ref_commit_iter = m_event_refs.begin();
+
+  //add by dingl
+  m_need_commit_journal = false;
 }
 
 template <typename I>
-void JournalStore<I>::init(Context *on_finish) {
+void JournalStore<I>::init(bufferlist *bl, Context *on_finish) {
   // TODO don't reset the writeback journal
   Context *ctx = new FunctionContext(
     [this, on_finish](int r) {
@@ -61,7 +65,16 @@ void JournalStore<I>::init(Context *on_finish) {
         on_finish->complete(r);
         return;
       }
-      reset(on_finish);
+
+	  //add by dingl
+	  if (m_event_file.filesize() > 0) {
+	  	load_events(bl, on_finish);
+		if (bl->length() > 0) {
+			m_need_commit_journal = true;
+		}
+	  } else {
+      	reset(on_finish);
+	  }
     });
   ctx = new FunctionContext(
     [this, ctx](int r) {
@@ -72,6 +85,9 @@ void JournalStore<I>::init(Context *on_finish) {
       m_block_file.open(ctx);
     });
   m_event_file.open(ctx);
+
+  //add by dingl
+  set_encoded_event_size();
 }
 
 template <typename I>
@@ -171,6 +187,10 @@ void JournalStore<I>::append_event(uint64_t tid, uint64_t image_block,
 
   // ring-buffer event offset can be calculated
   size_t event_idx = event_ref - &m_event_ref_pool.front();
+  //add by dingl
+  ldout(cct, 6) << "before modulo, event_idx " << event_idx << dendl;
+  event_idx %= m_ring_buf_cnt;
+  ldout(cct, 6) << "after modulo, event_idx " << event_idx << dendl;
   uint64_t event_offset = event_idx * Event::ENCODED_SIZE;
 
   // on-disk event format
@@ -247,6 +267,10 @@ void JournalStore<I>::demote_block(uint64_t block, bufferlist &&bl,
 
   // ring-buffer event offset can be calculated
   size_t event_idx = event_ref - &m_event_ref_pool.front();
+  //add by dingl
+  ldout(cct, 6) << "before modulo, event_idx " << event_idx << dendl;
+  event_idx %= m_ring_buf_cnt;
+  ldout(cct, 6) << "after modulo, event_idx " << event_idx << dendl;
   uint64_t event_offset = event_idx * Event::ENCODED_SIZE;
   uint64_t block_offset = event_idx * m_block_size;
 
@@ -291,7 +315,7 @@ int JournalStore<I>::get_writeback_event(uint64_t *tid, uint64_t *image_block,
   {
     Mutex::Locker locker(m_lock);
     if (m_event_ref_writeback_iter == m_event_ref_alloc_iter) {
-      ldout(cct, 20) << "no blocks available" << dendl;
+      lderr(cct) << "no blocks available" << dendl;
       return -ENODATA;
     }
 
@@ -355,6 +379,10 @@ void JournalStore<I>::get_writeback_block(uint64_t tid, bufferlist *bl,
 
   // ring-buffer event offset can be calculated
   size_t event_idx = event_ref - &m_event_ref_pool.front();
+  //add by dingl
+  ldout(cct, 6) << "before modulo, event_idx " << event_idx << dendl;
+  event_idx %= m_ring_buf_cnt;
+  ldout(cct, 6) << "after modulo, event_idx " << event_idx << dendl;
   uint64_t block_offset = event_idx * m_block_size;
   m_block_file.read(block_offset, m_block_size, bl, on_finish);
 }
@@ -387,6 +415,10 @@ void JournalStore<I>::commit_event(uint64_t tid, Context *on_finish) {
 
   // ring-buffer event offset can be calculated
   size_t event_idx = event_ref - &m_event_ref_pool.front();
+  //add by dingl
+  ldout(cct, 6) << "before modulo, event_idx " << event_idx << dendl;
+  event_idx %= m_ring_buf_cnt;
+  ldout(cct, 6) << "after modulo, event_idx " << event_idx << dendl;
   uint64_t event_offset = (event_idx * Event::ENCODED_SIZE) +
                           Event::ENCODED_FIELDS_OFFSET;
   //uint64_t block = event_ref->block;
@@ -480,6 +512,80 @@ void JournalStore<I>::commit_event(uint64_t tid, Context *on_finish) {
   event.encode_fields(event_bl);
   m_event_file.write(event_offset, std::move(event_bl), (ctx != on_finish),
                      ctx);
+}
+
+//set encoded event size,add by dingl
+template <typename I>
+void JournalStore<I>::set_encoded_event_size()
+{
+	CephContext *cct = m_image_ctx.cct;
+	Event e;
+	bufferlist bl;
+
+	e.encode(bl);
+	ldout(cct, 6) <<"encoded event size " << bl.length() << dendl;
+	Mutex::Locker locker(m_lock);
+	encoded_event_size = bl.length();
+}
+
+//read a event,add by dingl
+template <typename I> 
+int JournalStore<I>::read_event_sync(uint32_t event, bufferlist *bl) {
+	uint64_t event_offset;
+
+	event_offset = event * Event::ENCODED_SIZE;
+	return m_event_file.read_sync(event_offset, Event::ENCODED_SIZE, bl);
+}
+
+//load all events in journal,add by dingl
+template <typename I> 
+void JournalStore<I>::load_events(bufferlist *bl, Context *on_finish) {
+	 uint32_t uncommit_event_num = 0;
+	 
+     for(uint32_t event = 0; event < m_ring_buf_cnt; ++event) {
+	 	bufferlist bl_tmp;
+		bufferlist::iterator it;
+		Event e;
+		int ret;
+
+		ldout(cct, 20) << "read event:" << event << dendl; 
+		ret = read_event_sync(event, &bl_tmp);
+		if (ret < 0) {
+			lderr(cct) << "error to read event:" << event << dendl;
+			on_finish->complete(ret);
+			return;
+		}
+		if (bl_tmp.is_zero()) {
+			ldout(cct, 20) << "bufferlist is zero,skip this" << dendl; 
+			bl_tmp.clear();
+			continue;
+		}
+		it = bl_tmp.begin();
+		e.decode(it);
+		//debug
+		dump_event(&e, 6);
+		if (e.fields.committed) {
+			ldout(cct, 20) << "event has been commited,ignore it" << dendl;
+			bl_tmp.clear();
+			continue;
+		}
+		++uncommit_event_num;
+        bl->claim_append(bl_tmp);
+     }
+     ldout(cct, 6) << "uncommit_event_num " << uncommit_event_num << dendl; 
+	 on_finish->complete(0);
+}
+
+//dump event, add by dingl
+template <typename I>
+void JournalStore<I>::dump_event(Event *e, int log_level) {
+	dout(log_level) << " event dump:\n";
+	JSONFormatter f(false);
+	f.open_object_section("Event");
+	e->dump(&f);
+	f.close_section();
+	f.flush(*_dout);
+	*_dout << dendl;
 }
 
 } // namespace file
