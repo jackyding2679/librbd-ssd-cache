@@ -83,7 +83,10 @@ public:
   //add by dingl
   void set_encoded_event_size();
   void load_events(bufferlist *bl, Context *on_finish);
-  void dump_event(Event *e, int log_level);
+  void dump_event(Event *e, int log_level);  
+  void get_journal_block(uint64_t block, bufferlist *bl, Context *on_finish);
+  void commit_event(uint64_t journal_block, 
+				  IOType io_type, bool demoted, Context *on_finish);
 
 private:
   static const uint64_t INVALID_IMAGE_BLOCK = static_cast<uint64_t>(-1);
@@ -106,6 +109,7 @@ private:
     uint64_t tid;     ///< monotonically increasing event sequence
     uint64_t image_block;   ///< image block associated with event
     uint64_t cache_block;   //cache block store data, add by dingl
+    uint64_t journal_block;//when demote,write data to journal block, add by dingl
     IOType io_type : 2;
     EventState event_state : 3;
     bool demoted : 1;

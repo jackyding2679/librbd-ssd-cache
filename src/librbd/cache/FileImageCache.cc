@@ -866,6 +866,135 @@ struct C_WritebackRequest : public Context {
   }
 };
 
+//commit event reqeust,add by dingl
+template <typename I>
+struct C_CommitEventRequest : public Context {
+  I &image_ctx;
+  ImageWriteback<I> &image_writeback;
+  //Policy &policy;
+  JournalStore<I> &journal_store;
+  ImageStore<I> &image_store;
+  //const ReleaseBlock &release_block;
+  util::AsyncOpTracker &async_op_tracker;
+  //uint64_t tid;
+  uint64_t image_block_id;
+  uint64_t cache_block_id;
+  uint64_t journal_block_id;
+  IOType io_type;
+  bool demoted;
+  uint32_t block_size;
+
+  bufferlist bl;
+
+  C_CommitEventRequest(I &image_ctx, ImageWriteback<I> &image_writeback,
+                     JournalStore<I> &journal_store,
+                     ImageStore<I> &image_store,
+                     util::AsyncOpTracker &async_op_tracker,
+                     uint64_t image_block, uint64_t cache_block, 
+                     IOType io_type, bool demoted, uint32_t block_size)
+    : image_ctx(image_ctx), image_writeback(image_writeback),
+      journal_store(journal_store), image_store(image_store),
+      async_op_tracker(async_op_tracker),
+      image_block_id(image_block), cache_block_id(cache_block), 
+      io_type(io_type), demoted(demoted), block_size(block_size) {
+    async_op_tracker.start_op();
+  }
+  
+  virtual C_CommitEventRequest() {
+    async_op_tracker.finish_op();
+  }
+  
+  void send() {
+    read_from_cache();
+  }
+
+  void read_from_cache() {
+    CephContext *cct = image_ctx.cct;
+    ldout(cct, 20) << "(C_CommitEventRequest)" << dendl;
+
+    Context *ctx = util::create_context_callback<
+      C_CommitEventRequest<I>,
+      &C_CommitEventRequest<I>::handle_read_from_cache>(this);
+    if (demoted) {
+      journal_store.get_journal_block(journal_block_id, &bl, ctx);
+    } else {
+      image_store.read_block(cache_block_id, {{0, block_size}}, &bl, ctx);
+    }
+  }
+  
+  void handle_read_from_cache(int r) {
+    CephContext *cct = image_ctx.cct;
+    ldout(cct, 20) << "(C_CommitEventRequest): r=" << r << dendl;
+
+    if (r < 0) {
+      lderr(cct) << "failed to read cache block: "<< cpp_strerror(r) << dendl;
+      complete(r);
+      return;
+    }
+
+    write_to_image();
+  }
+  
+  void write_to_image() {
+    CephContext *cct = image_ctx.cct;
+    ldout(cct, 20) << "(C_CommitEventRequest)" << dendl;
+
+    Context *ctx = util::create_context_callback<
+      C_CommitEventRequest<I>,
+      &C_CommitEventRequest<I>::handle_write_to_image>(this);
+    image_writeback.aio_write({{image_block_id * block_size, block_size}},
+		                      			std::move(bl), 0, ctx);
+  }
+
+  void handle_write_to_image(int r) {
+    CephContext *cct = image_ctx.cct;
+    ldout(cct, 20) << "(C_CommitEventRequest): r=" << r << dendl;
+
+    if (r < 0) {
+      lderr(cct) << "failed to write block to image: " << cpp_strerror(r) << dendl;
+      complete(r);
+      return;
+    }
+
+    commit_event();
+  }
+
+  void commit_event() {
+    CephContext *cct = image_ctx.cct;
+    ldout(cct, 20) << "(C_CommitEventRequest)" << dendl;
+
+    Context *ctx = util::create_context_callback<
+      C_CommitEventRequest<I>,
+      &C_CommitEventRequest<I>::handle_commit_event>(this);
+    journal_store.commit_event(journal_block_id, io_type, demoted, ctx);
+  }
+
+  void handle_commit_event(int r) {
+    CephContext *cct = image_ctx.cct;
+    ldout(cct, 20) << "(C_CommitEventRequest): r=" << r << dendl;
+
+    if (r < 0) {
+      lderr(cct) << "failed to commit event in cache: "
+                 << cpp_strerror(r) << dendl;
+      complete(r);
+      return;
+    }
+
+    complete(0);
+  }
+
+  virtual void finish(int r) {
+    CephContext *cct = image_ctx.cct;
+    ldout(cct, 20) << "r=" << r << dendl;
+
+    if (r < 0) {
+      lderr(cct) << "failed to writeback block " << image_block_id << ": "
+                 << cpp_strerror(r) << dendl;
+    }
+  }
+};
+
+
 } // anonymous namespace
 
 template <typename I>
@@ -1404,26 +1533,37 @@ void FileImageCache<I>::flush(Context *on_finish) {
   //aio_flush(on_finish);
 }
 
-//commit event,add by dingl
+//replay journal,add by dingl
 template <typename I>
-void FileImageCache<I>::commit_journal(bufferlist *bl) {
+void FileImageCache<I>::replay_journal(bufferlist *bl, Context *on_finish) {
+	encoded_event_size = m_journal_store->encoded_event_size;
+	util::AsyncOpTracker t_async_op_tracker;
+	t_async_op_tracker.wait(m_image_ctx, on_finish);
 
-	for(bufferlist::iterator it = bl->begin(); it != bl->end(); ) {
+	for (bufferlist::iterator it = bl->begin(); it != bl->end(); ) {
 		Event e;
-		uint64_t tid;
-		uint64_t image_block;
-		uint64_t cache_block;
-		IOType io_type;
-		bool demote;
+		int ret;
 
 		e.decode(it);
-		tid = e.tid;
-		image_block = e.image_block;
-		cache_block = e.cache_block;
-		io_type = e.io_type;
-		demote = e.fields.demote;
+		//need to advance iterator to adjust the offset
+		it.advance(Event::ENCODED_SIZE - encoded_event_size);
+		ret = m_journal_store->check_event(e);
+		if (ret != 0) {
+			lderr(cct) << "bad event, skip this" << dendl;
+			continue;
+		}
+		uint64_t tid = e.tid;
+		uint64_t image_block = e.image_block;
+		uint64_t cache_block = e.cache_block;
+		uint64_t journal_block = e.journal_block;
+		IOType io_type = e.io_type;
+		bool demoted = e.fields.demote;
 
-
+		C_CommitEventRequest<I> *req = new C_CommitEventRequest<I>(
+      		m_image_ctx, m_image_writeback, *m_journal_store,*m_image_store, 
+      		m_async_op_tracker, image_block, cache_block, io_type, demoted, 
+      		BLOCK_SIZE);
+		ret->send();
 	}
 }
 

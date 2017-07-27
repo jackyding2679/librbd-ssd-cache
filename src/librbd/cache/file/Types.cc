@@ -65,6 +65,7 @@ namespace journal_store {
 void Event::encode_fields(bufferlist& bl) const {
   uint8_t *fields = reinterpret_cast<uint8_t*>(&fields);
   ::encode(*fields, bl);
+  ::encode(journal_block, bl);//add by dingl
 }
 
 void Event::encode(bufferlist& bl) const {
@@ -88,7 +89,8 @@ void Event::decode(bufferlist::iterator& it) {
   ::decode(crc, it);
   uint8_t byte_fields;
   ::decode(byte_fields, it);
-  reinterpret_cast<uint8_t&>(fields) = byte_fields;
+  reinterpret_cast<uint8_t&>(fields) = byte_fields;  
+  ::decode(journal_block, it);//add by dingl
   DECODE_FINISH(it);
 }
 
@@ -97,6 +99,7 @@ void Event::dump(Formatter *f) const {
   f->dump_unsigned("tid", tid);//add by dingl
   f->dump_unsigned("image_block", image_block);
   f->dump_unsigned("cache_block", cache_block);
+  f->dump_unsigned("journal_block", journal_block);
   f->dump_unsigned("crc", crc);
   f->dump_unsigned("io_type", fields.io_type);
   f->dump_bool("demoted", fields.demoted);

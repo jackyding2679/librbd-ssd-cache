@@ -198,6 +198,7 @@ void JournalStore<I>::append_event(uint64_t tid, uint64_t image_block,
   event.tid = tid;
   event.image_block = image_block;//modified by dingl
   event.cache_block = cache_block;
+  event.crc = ceph_crc32c(0, (unsigned char *)&event, Event::EVENT_CRC_LENGTH)
   event.fields.io_type = io_type;
   event.fields.demoted = false;
   event.fields.committed = false;
@@ -284,12 +285,14 @@ void JournalStore<I>::demote_block(uint64_t block, bufferlist &&bl,
 
       // block is still detained -- safe to flag as demoted
       event_ref->demoted = true;
+	  event_ref->journal_block = event_idx;//add by d
 
       Event event;
       event.fields.io_type = event_ref->io_type;
       event.fields.demoted = true;
       event.fields.allocated = true;
       event.fields.committed = false; // NOTE: block locked, writeback not in-progress
+      event.journal_block = event_idx;//add by d
 
       bufferlist event_bl;
       event.encode_fields(event_bl);
@@ -587,6 +590,112 @@ void JournalStore<I>::dump_event(Event *e, int log_level) {
 	f.flush(*_dout);
 	*_dout << dendl;
 }
+
+//get journal block, add by dingl
+template <typename I>
+void JournalStore<I>::get_journal_block(uint64_t block, bufferlist *bl,
+											Context *on_finish) {
+	ldout(cct, 6) << "read block " << block << dendl;
+	uint64_t block_offset = block * m_block_size;
+	m_block_file.read(block_offset, m_block_size, bl, on_finish);
+}
+
+//commmit event when replaying journal, add by dingl
+template <typename I>
+void JournalStore<I>::commit_event(uint64_t journal_block, 
+				IOType io_type, bool demoted, Context *on_finish) {
+	ldout(cct, 6) << "commit journal block " << journal_block << dendl;
+	Context *ctx = on_finish;
+
+	Event event;
+	event.fields.io_type = io_type;
+	event.fields.demoted = demoted;
+	event.fields.allocated = demoted;
+	event.fields.committed = true;
+	event.journal_block = journal_block;
+	uint64_t block_offset = journal_block * m_block_size;
+	uint64_t event_offset = (journal_block * Event::ENCODED_SIZE) +
+							Event::ENCODED_FIELDS_OFFSET;
+
+	if (demote) {
+		ctx = new FunctionContext(
+	 	[this, event, event_offset, ctx](int r) {
+	   		Context *next_ctx = ctx;
+	   		if (r < 0) {
+		 		next_ctx = new FunctionContext(
+		  	 	[next_ctx, r](int _r) {
+			 		// TODO
+			 		next_ctx->complete(r);
+		   		});
+	   		}
+
+	   		Event event_copy;
+	   		event_copy.fields = event.fields;
+	   		event_copy.fields.allocated = false;
+
+	   		bufferlist event_bl;
+	   		event_copy.encode_fields(event_bl);
+	   		m_event_file.write(event_offset, std::move(event_bl), false, next_ctx);
+	 	});
+		
+		ctx = new FunctionContext(
+		 [this, block_offset, ctx](int r) {
+	  	 	Context *next_ctx = ctx;
+	   		if (r < 0) {
+		 		next_ctx = new FunctionContext(
+		   		[next_ctx, r](int _r) {
+			 		// TODO
+			 		next_ctx->complete(r);
+		   		});
+	   		}
+	   		m_block_file.discard(block_offset * m_block_size, 
+										m_block_size, true, next_ctx);
+	 	});
+	}
+
+	bufferlist event_bl;
+	event.encode_fields(event_bl);
+	m_event_file.write(event_offset, std::move(event_bl), (ctx != on_finish),
+}
+
+//check event, add by dingl
+template <typename I>
+int JournalStore<I>::check_event(Event &e) {
+	uint32_t read_crc = e.crc;
+	uint32_t calc_crc = 0;
+	int ret = 0;
+
+	if (e.tid < 0) {
+		ret = -1;
+		lderr(cct) << "bad tid " << e.tid << dendl;
+	}
+	
+	if (e.image_block < 0 || e.image_block > (m_image_ctx.size / BLOCK_SIZE)) {
+		ret = -1;
+		lderr(cct) << "bad image_block " << e.image_block << dendl;
+	}
+
+	if (e.cache_block < 0 ||
+			e.cache_block > (m_image_ctx.ssd_cache_size / BLOCK_SIZE)) {
+		ret = -1;
+		lderr(cct) << "bad cache_block " << e.cache_block << dendl;
+	}
+
+	if (e.journal_block < 0 || e.journal_block > m_ring_buf_cnt) {
+		ret = -1;
+		lderr(cct) << "bad journal_block " << e.journal_block << dendl;
+	}
+
+	calc_crc = ceph_crc32c(0, (unsigned char *)&e, Event::EVENT_CRC_LENGTH);
+	if (read_crc != calc_crc) {
+		ret = -1;
+		lderr(cct) << "bad event crc, read_crc " << e.crc 
+							<< "calc_crc " << calc_crc << dendl;
+	}
+
+	return ret;
+}
+
 
 } // namespace file
 } // namespace cache
