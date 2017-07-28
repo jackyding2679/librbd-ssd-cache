@@ -110,7 +110,7 @@ struct C_PromoteToCache : public C_BlockIORequest {
                    const bufferlist &bl, C_BlockIORequest *next_block_request)
     : C_BlockIORequest(cct, next_block_request),
       image_store(image_store), block_io(block_io), 
-      cache_block_id(cache_block), bl(bl) {
+      bl(bl), cache_block_id(cache_block) {
   }
 
   virtual void send() override {
@@ -180,8 +180,8 @@ struct C_ReadFromCacheRequest : public C_BlockIORequest {
                          ExtentBuffers *extent_buffers,
                          C_BlockIORequest *next_block_request)
     : C_BlockIORequest(cct, next_block_request),
-      image_store(image_store), block_io(block_io), cache_block_id(cache_block), 
-      extent_buffers(extent_buffers) {
+      image_store(image_store), block_io(block_io),
+      extent_buffers(extent_buffers), cache_block_id(cache_block) {
   }
 
   virtual void send() override {
@@ -887,20 +887,19 @@ struct C_CommitEventRequest : public Context {
   bufferlist bl;
 
   C_CommitEventRequest(I &image_ctx, ImageWriteback<I> &image_writeback,
-                     JournalStore<I> &journal_store,
-                     ImageStore<I> &image_store,
-                     util::AsyncOpTracker &async_op_tracker,
-                     uint64_t image_block, uint64_t cache_block, 
+                     JournalStore<I> &journal_store,ImageStore<I> &image_store,
+                     util::AsyncOpTracker &async_op_tracker, uint64_t image_block,
+                     uint64_t cache_block, uint64_t journal_block,
                      IOType io_type, bool demoted, uint32_t block_size)
     : image_ctx(image_ctx), image_writeback(image_writeback),
       journal_store(journal_store), image_store(image_store),
-      async_op_tracker(async_op_tracker),
-      image_block_id(image_block), cache_block_id(cache_block), 
+      async_op_tracker(async_op_tracker), image_block_id(image_block),
+      cache_block_id(cache_block), journal_block_id(journal_block),
       io_type(io_type), demoted(demoted), block_size(block_size) {
     async_op_tracker.start_op();
   }
   
-  virtual C_CommitEventRequest() {
+  virtual ~C_CommitEventRequest() {
     async_op_tracker.finish_op();
   }
   
@@ -1006,7 +1005,7 @@ FileImageCache<I>::FileImageCache(ImageCtx &image_ctx)
     m_release_block(std::bind(&FileImageCache<I>::release_block, this,
                               std::placeholders::_1)),
     m_detain_block(std::bind(&FileImageCache<I>::append_detain_block, this, std::placeholders::_1)),
-    m_lock("librbd::cache::FileImageCache::m_lock") {
+    m_lock("librbd::cache::FileImageCache::m_lock"), cct(m_image_ctx.cct) {
   CephContext *cct = m_image_ctx.cct;
   uint8_t write_mode = cct->_conf->rbd_persistent_cache_writeback?1:0;
   m_policy->set_write_mode(write_mode);
@@ -1020,7 +1019,7 @@ FileImageCache<I>::~FileImageCache() {
 template <typename I>
 void FileImageCache<I>::aio_read(Extents &&image_extents, bufferlist *bl,
                                  int fadvise_flags, Context *on_finish) {
-  CephContext *cct = m_image_ctx.cct;
+  //CephContext *cct = m_image_ctx.cct;
   //ldout(cct, 20) << "image_extents=" << image_extents << ", "
   //               << "on_finish=" << on_finish << dendl;
 
@@ -1036,7 +1035,7 @@ void FileImageCache<I>::aio_write(Extents &&image_extents,
                                   bufferlist&& bl,
                                   int fadvise_flags,
                                   Context *on_finish) {
-  CephContext *cct = m_image_ctx.cct;
+  //CephContext *cct = m_image_ctx.cct;
   //ldout(cct, 20) << "image_extents=" << image_extents << ", "
   //               << "on_finish=" << on_finish << dendl;
 
@@ -1158,6 +1157,7 @@ void FileImageCache<I>::init(Context *on_finish) {
   //bufferlist meta_bl;
   //this would cause stack overflow, so we use operator new, add by dingl
   bufferlist *meta_bl = new bufferlist();
+  bufferlist *journal_bl = new bufferlist();
   // chain the initialization of the meta, image, and journal stores
   Context *ctx = new FunctionContext(
     [this, on_finish](int r) {
@@ -1166,15 +1166,28 @@ void FileImageCache<I>::init(Context *on_finish) {
         m_policy->set_block_count(
           m_meta_store->offset_to_block(m_image_ctx.size));
       }
-      //
-	  if (event_bl->length() > 0) {
-		 
-	  }
 	  
       on_finish->complete(r);
     });
+
+	//replay journal, add by dingl
+	ctx = new FunctionContext([this, cct, journal_bl, ctx](int r) {
+		if (r < 0) {
+	  		ctx->complete(r);
+	  		return;
+		}
+		if (journal_bl->length() > 0) {
+			ldout(cct, 6) << "replay journal" << dendl;
+			replay_journal(journal_bl, ctx);
+		} else {
+			ctx->complete(0);
+		}
+		
+		delete journal_bl;
+  	});
+  
   ctx = new FunctionContext(
-    [this, ctx](int r) {
+    [this, journal_bl, ctx](int r) {
       if (r < 0) {
         ctx->complete(r);
         return;
@@ -1185,7 +1198,7 @@ void FileImageCache<I>::init(Context *on_finish) {
                                             *m_meta_store);
       //m_journal_store->init(ctx);
       //add by dingl
-      m_journal_store->init(event_bl, ctx);
+      m_journal_store->init(journal_bl, ctx);
     });
   ctx = new FunctionContext(
     [this, meta_bl, ctx](int r) mutable {
@@ -1486,7 +1499,7 @@ void FileImageCache<I>::process_deferred_block_ios() {
 template <typename I>
 void FileImageCache<I>::invalidate(Extents&& image_extents,
                                    Context *on_finish) {
-  CephContext *cct = m_image_ctx.cct;
+//  CephContext *cct = m_image_ctx.cct;
   //ldout(cct, 20) << "image_extents=" << image_extents << dendl;
 
   // TODO
@@ -1536,17 +1549,18 @@ void FileImageCache<I>::flush(Context *on_finish) {
 //replay journal,add by dingl
 template <typename I>
 void FileImageCache<I>::replay_journal(bufferlist *bl, Context *on_finish) {
-	encoded_event_size = m_journal_store->encoded_event_size;
-	util::AsyncOpTracker t_async_op_tracker;
-	t_async_op_tracker.wait(m_image_ctx, on_finish);
+	ldout(cct, 6) << dendl;
+	uint32_t encoded_event_size = m_journal_store->get_encoded_event_size();
+	//util::AsyncOpTracker t_async_op_tracker;
+	m_async_op_tracker.wait(m_image_ctx, on_finish);
 
 	for (bufferlist::iterator it = bl->begin(); it != bl->end(); ) {
-		Event e;
+		journal_store::Event e;
 		int ret;
 
 		e.decode(it);
 		//need to advance iterator to adjust the offset
-		it.advance(Event::ENCODED_SIZE - encoded_event_size);
+		it.advance(journal_store::Event::ENCODED_SIZE - encoded_event_size);
 		ret = m_journal_store->check_event(e);
 		if (ret != 0) {
 			lderr(cct) << "bad event, skip this" << dendl;
@@ -1556,14 +1570,15 @@ void FileImageCache<I>::replay_journal(bufferlist *bl, Context *on_finish) {
 		uint64_t image_block = e.image_block;
 		uint64_t cache_block = e.cache_block;
 		uint64_t journal_block = e.journal_block;
-		IOType io_type = e.io_type;
-		bool demoted = e.fields.demote;
+		IOType io_type = e.fields.io_type;
+		bool demoted = e.fields.demoted;
+		ldout(cct, 6) << "commit event tid " << tid << dendl;
 
 		C_CommitEventRequest<I> *req = new C_CommitEventRequest<I>(
-      		m_image_ctx, m_image_writeback, *m_journal_store,*m_image_store, 
-      		m_async_op_tracker, image_block, cache_block, io_type, demoted, 
-      		BLOCK_SIZE);
-		ret->send();
+      		m_image_ctx, m_image_writeback, *m_journal_store, *m_image_store, 
+      		m_async_op_tracker, image_block, cache_block, journal_block, 
+      		io_type, demoted, BLOCK_SIZE);
+		req->send();
 	}
 }
 

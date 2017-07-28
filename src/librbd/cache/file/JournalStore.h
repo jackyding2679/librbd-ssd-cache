@@ -5,6 +5,7 @@
 #define CEPH_LIBRBD_CACHE_FILE_JOURNAL_STORE
 
 #include "librbd/cache/Types.h"
+#include "librbd/cache/file/Types.h"
 #include "librbd/cache/file/AioFile.h"
 #include "common/Mutex.h"
 #include <boost/intrusive/slist.hpp>
@@ -82,11 +83,14 @@ public:
   void commit_event(uint64_t tid, Context *on_finish);
   //add by dingl
   void set_encoded_event_size();
+  uint32_t get_encoded_event_size() const;
+  int read_event_sync(uint32_t event, bufferlist *bl);
   void load_events(bufferlist *bl, Context *on_finish);
-  void dump_event(Event *e, int log_level);  
+  void dump_event(journal_store::Event *e, int log_level);  
   void get_journal_block(uint64_t block, bufferlist *bl, Context *on_finish);
   void commit_event(uint64_t journal_block, 
 				  IOType io_type, bool demoted, Context *on_finish);
+  int check_event(journal_store::Event &e);
 
 private:
   static const uint64_t INVALID_IMAGE_BLOCK = static_cast<uint64_t>(-1);

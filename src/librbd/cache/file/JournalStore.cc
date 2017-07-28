@@ -60,7 +60,7 @@ template <typename I>
 void JournalStore<I>::init(bufferlist *bl, Context *on_finish) {
   // TODO don't reset the writeback journal
   Context *ctx = new FunctionContext(
-    [this, on_finish](int r) {
+    [this, bl, on_finish](int r) {
       if (r < 0) {
         on_finish->complete(r);
         return;
@@ -198,7 +198,7 @@ void JournalStore<I>::append_event(uint64_t tid, uint64_t image_block,
   event.tid = tid;
   event.image_block = image_block;//modified by dingl
   event.cache_block = cache_block;
-  event.crc = ceph_crc32c(0, (unsigned char *)&event, Event::EVENT_CRC_LENGTH)
+  event.crc = ceph_crc32c(0, (unsigned char *)&event, Event::EVENT_CRC_LENGTH);
   event.fields.io_type = io_type;
   event.fields.demoted = false;
   event.fields.committed = false;
@@ -276,7 +276,7 @@ void JournalStore<I>::demote_block(uint64_t block, bufferlist &&bl,
   uint64_t block_offset = event_idx * m_block_size;
 
   Context *ctx = new FunctionContext(
-    [this, event_ref, event_offset, on_finish](int r) {
+    [this, event_ref, event_offset, event_idx, on_finish](int r) {
       if (r < 0) {
         // TODO
         on_finish->complete(r);
@@ -427,8 +427,8 @@ void JournalStore<I>::commit_event(uint64_t tid, Context *on_finish) {
   //uint64_t block = event_ref->block;
   //modified by dingl
   uint64_t block_offset = event_idx * m_block_size;
-  uint64_t image_block = event_ref->image_block;
-  uint64_t cache_block = event_ref->cache_block;
+  //uint64_t image_block = event_ref->image_block;
+  //uint64_t cache_block = event_ref->cache_block;
 
   Event event;
   event.fields.io_type = event_ref->io_type;
@@ -531,6 +531,12 @@ void JournalStore<I>::set_encoded_event_size()
 	encoded_event_size = bl.length();
 }
 
+//get encoded envet size, add by dingl
+template <typename I>
+uint32_t JournalStore<I>::get_encoded_event_size() const {
+	return encoded_event_size;
+}
+
 //read a event,add by dingl
 template <typename I> 
 int JournalStore<I>::read_event_sync(uint32_t event, bufferlist *bl) {
@@ -581,7 +587,7 @@ void JournalStore<I>::load_events(bufferlist *bl, Context *on_finish) {
 
 //dump event, add by dingl
 template <typename I>
-void JournalStore<I>::dump_event(Event *e, int log_level) {
+void JournalStore<I>::dump_event(journal_store::Event *e, int log_level) {
 	dout(log_level) << " event dump:\n";
 	JSONFormatter f(false);
 	f.open_object_section("Event");
@@ -617,7 +623,7 @@ void JournalStore<I>::commit_event(uint64_t journal_block,
 	uint64_t event_offset = (journal_block * Event::ENCODED_SIZE) +
 							Event::ENCODED_FIELDS_OFFSET;
 
-	if (demote) {
+	if (demoted) {
 		ctx = new FunctionContext(
 	 	[this, event, event_offset, ctx](int r) {
 	   		Context *next_ctx = ctx;
@@ -656,11 +662,12 @@ void JournalStore<I>::commit_event(uint64_t journal_block,
 	bufferlist event_bl;
 	event.encode_fields(event_bl);
 	m_event_file.write(event_offset, std::move(event_bl), (ctx != on_finish),
+		 ctx);
 }
 
 //check event, add by dingl
 template <typename I>
-int JournalStore<I>::check_event(Event &e) {
+int JournalStore<I>::check_event(journal_store::Event &e) {
 	uint32_t read_crc = e.crc;
 	uint32_t calc_crc = 0;
 	int ret = 0;

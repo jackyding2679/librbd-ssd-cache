@@ -53,6 +53,8 @@ public:
 
   void invalidate(Context *on_finish) override;
   void flush(Context *on_finish) override;
+  //replay journal, add by dingl
+  void replay_journal(bufferlist *bl, Context *on_finish);
 
 private:
   typedef std::function<void(uint64_t)> ReleaseBlock;
@@ -96,6 +98,8 @@ private:
   void process_deferred_block_ios();
 
   void invalidate(Extents&& image_extents, Context *on_finish);
+
+  CephContext *cct;
 
 };
 
