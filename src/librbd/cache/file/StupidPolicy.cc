@@ -353,19 +353,21 @@ void StupidPolicy<I>::bufferlist_to_entry(bufferlist *bl){
 		}
 		//Debug
 		dump_entry(&entry, 6);
-		auto entry_it = m_entries[cache_block];
+		auto entry_it = &m_entries[cache_block];
+		
 		//Remove from the free lru list, and insert to the corresponding list
-		m_free_lru.remove(&entry_it);
+		m_free_lru.remove(entry_it);
+		
 		if (is_dirty) {
-			m_dirty_lru.insert_head(&entry_it);
+			m_dirty_lru.insert_head(entry_it);
 		} else {
-			m_clean_lru.insert_head(&entry_it);
+			m_clean_lru.insert_head(entry_it);
 		}
-		entry_it.cache_block = entry.cache_block;
-		entry_it.image_block = entry.image_block;
-		entry_it.dirty = entry.dirty;
+		entry_it->cache_block = entry.cache_block;
+		entry_it->image_block = entry.image_block;
+		entry_it->dirty = entry.dirty;
 		//Update the block_to_entries map
-		m_block_to_entries[image_block] = &entry_it;
+		m_block_to_entries[image_block] = entry_it;
 	}
 	//debug
 	ldout(cct, 6) << "m_free_lru size " << m_free_lru.get_length()

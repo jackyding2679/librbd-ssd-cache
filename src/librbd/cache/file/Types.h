@@ -60,7 +60,7 @@ struct Event {
   static const size_t ENCODED_SIZE = 64;
   //static const size_t ENCODED_FIELDS_OFFSET = 26;
   //modified by dingl
-  static const size_t ENCODED_FIELDS_OFFSET = 42;
+  static const size_t ENCODED_FIELDS_OFFSET = 34;
   static const size_t EVENT_CRC_LENGTH = 24;//tid, image_block, cache_block
 
   uint64_t tid;   /// TODO can this be eliminated safely?
@@ -73,8 +73,12 @@ struct Event {
     bool demoted : 1;
     bool committed : 1;
     bool allocated : 1;
+    //uint8_t  io_type : 2;
+    //uint8_t demoted : 1;
+    //uint8_t committed : 1;
+    //uint8_t allocated : 1;
   } fields;
-  uint64_t journal_block;//add by dingl
+  uint64_t journal_event_idx;//add by dingl
   
   void encode_fields(bufferlist& bl) const;
 

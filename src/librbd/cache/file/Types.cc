@@ -63,9 +63,9 @@ void Header::generate_test_instances(std::list<Header *> &o) {
 namespace journal_store {
 
 void Event::encode_fields(bufferlist& bl) const {
-  uint8_t *fields = reinterpret_cast<uint8_t*>(&fields);
-  ::encode(*fields, bl);
-  ::encode(journal_block, bl);//add by dingl
+  uint8_t const *t_fields = reinterpret_cast<uint8_t const *>(&fields);//modified by dingl
+  ::encode(*t_fields, bl);
+  ::encode(journal_event_idx, bl);
 }
 
 void Event::encode(bufferlist& bl) const {
@@ -90,7 +90,7 @@ void Event::decode(bufferlist::iterator& it) {
   uint8_t byte_fields;
   ::decode(byte_fields, it);
   reinterpret_cast<uint8_t&>(fields) = byte_fields;  
-  ::decode(journal_block, it);//add by dingl
+  ::decode(journal_event_idx, it);//add by dingl
   DECODE_FINISH(it);
 }
 
@@ -99,12 +99,12 @@ void Event::dump(Formatter *f) const {
   f->dump_unsigned("tid", tid);//add by dingl
   f->dump_unsigned("image_block", image_block);
   f->dump_unsigned("cache_block", cache_block);
-  f->dump_unsigned("journal_block", journal_block);
-  f->dump_unsigned("crc", crc);
+  f->dump_format("crc", "0x%X", crc);
   f->dump_unsigned("io_type", fields.io_type);
   f->dump_bool("demoted", fields.demoted);
   f->dump_bool("committed", fields.committed);
   f->dump_bool("allocated", fields.allocated);
+  f->dump_unsigned("journal_event_idx", journal_event_idx);
 }
 
 void Event::generate_test_instances(std::list<Event *> &o) {

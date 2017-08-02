@@ -87,8 +87,8 @@ public:
   int read_event_sync(uint32_t event, bufferlist *bl);
   void load_events(bufferlist *bl, Context *on_finish);
   void dump_event(journal_store::Event *e, int log_level);  
-  void get_journal_block(uint64_t block, bufferlist *bl, Context *on_finish);
-  void commit_event(uint64_t journal_block, 
+  void get_journal_block(uint64_t index, bufferlist *bl, Context *on_finish);
+  void commit_event(uint64_t index, 
 				  IOType io_type, bool demoted, Context *on_finish);
   int check_event(journal_store::Event &e);
 
@@ -113,7 +113,7 @@ private:
     uint64_t tid;     ///< monotonically increasing event sequence
     uint64_t image_block;   ///< image block associated with event
     uint64_t cache_block;   //cache block store data, add by dingl
-    uint64_t journal_block;//when demote,write data to journal block, add by dingl
+    uint64_t journal_event_idx;//when demote,write data to journal block, add by dingl
     IOType io_type : 2;
     EventState event_state : 3;
     bool demoted : 1;

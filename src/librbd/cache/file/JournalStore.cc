@@ -195,6 +195,7 @@ void JournalStore<I>::append_event(uint64_t tid, uint64_t image_block,
 
   // on-disk event format
   Event event;
+  memset(&event, 0, sizeof(event));//add by dingl
   event.tid = tid;
   event.image_block = image_block;//modified by dingl
   event.cache_block = cache_block;
@@ -202,10 +203,12 @@ void JournalStore<I>::append_event(uint64_t tid, uint64_t image_block,
   event.fields.io_type = io_type;
   event.fields.demoted = false;
   event.fields.committed = false;
+  event.journal_event_idx = event_idx;
 
   // in-memory event format
   event_ref->image_block = image_block;//modified by dingl
   event_ref->cache_block = cache_block;
+  event_ref->journal_event_idx = event_idx;
   event_ref->io_type = io_type;
   event_ref->event_state = EVENT_STATE_VALID;
   event_ref->demoted = false;
@@ -285,14 +288,14 @@ void JournalStore<I>::demote_block(uint64_t block, bufferlist &&bl,
 
       // block is still detained -- safe to flag as demoted
       event_ref->demoted = true;
-	  event_ref->journal_block = event_idx;//add by d
+	  event_ref->journal_event_idx = event_idx;//add by d
 
       Event event;
       event.fields.io_type = event_ref->io_type;
       event.fields.demoted = true;
       event.fields.allocated = true;
       event.fields.committed = false; // NOTE: block locked, writeback not in-progress
-      event.journal_block = event_idx;//add by d
+      event.journal_event_idx = event_idx;//add by d
 
       bufferlist event_bl;
       event.encode_fields(event_bl);
@@ -422,6 +425,7 @@ void JournalStore<I>::commit_event(uint64_t tid, Context *on_finish) {
   ldout(cct, 6) << "before modulo, event_idx " << event_idx << dendl;
   event_idx %= m_ring_buf_cnt;
   ldout(cct, 6) << "after modulo, event_idx " << event_idx << dendl;
+  assert(event_idx == event_ref->journal_event_idx);
   uint64_t event_offset = (event_idx * Event::ENCODED_SIZE) +
                           Event::ENCODED_FIELDS_OFFSET;
   //uint64_t block = event_ref->block;
@@ -431,10 +435,12 @@ void JournalStore<I>::commit_event(uint64_t tid, Context *on_finish) {
   //uint64_t cache_block = event_ref->cache_block;
 
   Event event;
+  memset(&event, 0, sizeof(event));//add by dingl
   event.fields.io_type = event_ref->io_type;
   event.fields.demoted = event_ref->demoted;
   event.fields.allocated = event_ref->demoted;
   event.fields.committed = true;
+  event.journal_event_idx = event_ref->journal_event_idx;
 
   //ldout(cct, 5) << "test1------------" << dendl;
 
@@ -512,6 +518,7 @@ void JournalStore<I>::commit_event(uint64_t tid, Context *on_finish) {
 
   // TODO throttle commit updates
   bufferlist event_bl;
+  event_bl.clear();//add by dingl
   event.encode_fields(event_bl);
   m_event_file.write(event_offset, std::move(event_bl), (ctx != on_finish),
                      ctx);
@@ -581,7 +588,7 @@ void JournalStore<I>::load_events(bufferlist *bl, Context *on_finish) {
 		++uncommit_event_num;
         bl->claim_append(bl_tmp);
      }
-     ldout(cct, 6) << "uncommit_event_num " << uncommit_event_num << dendl; 
+     ldout(cct, 6) << "uncommited event number " << uncommit_event_num << dendl; 
 	 on_finish->complete(0);
 }
 
@@ -602,25 +609,26 @@ template <typename I>
 void JournalStore<I>::get_journal_block(uint64_t block, bufferlist *bl,
 											Context *on_finish) {
 	ldout(cct, 6) << "read block " << block << dendl;
-	uint64_t block_offset = block * m_block_size;
-	m_block_file.read(block_offset, m_block_size, bl, on_finish);
+	uint64_t journal_offset = block * m_block_size;
+	m_block_file.read(journal_offset, m_block_size, bl, on_finish);
 }
 
 //commmit event when replaying journal, add by dingl
 template <typename I>
-void JournalStore<I>::commit_event(uint64_t journal_block, 
+void JournalStore<I>::commit_event(uint64_t event_idx, 
 				IOType io_type, bool demoted, Context *on_finish) {
-	ldout(cct, 6) << "commit journal block " << journal_block << dendl;
+	ldout(cct, 6) << "commit journal event " << event_idx << dendl;
 	Context *ctx = on_finish;
 
 	Event event;
+	memset(&event, 0, sizeof(event));//add by dingl
 	event.fields.io_type = io_type;
 	event.fields.demoted = demoted;
 	event.fields.allocated = demoted;
 	event.fields.committed = true;
-	event.journal_block = journal_block;
-	uint64_t block_offset = journal_block * m_block_size;
-	uint64_t event_offset = (journal_block * Event::ENCODED_SIZE) +
+	event.journal_event_idx = event_idx;
+	uint64_t block_offset = event_idx * m_block_size;
+	uint64_t event_offset = (event_idx * Event::ENCODED_SIZE) +
 							Event::ENCODED_FIELDS_OFFSET;
 
 	if (demoted) {
@@ -641,7 +649,7 @@ void JournalStore<I>::commit_event(uint64_t journal_block,
 
 	   		bufferlist event_bl;
 	   		event_copy.encode_fields(event_bl);
-	   		m_event_file.write(event_offset, std::move(event_bl), false, next_ctx);
+	   		m_event_file.write(event_offset, std::move(event_bl), true, next_ctx);
 	 	});
 		
 		ctx = new FunctionContext(
@@ -661,8 +669,7 @@ void JournalStore<I>::commit_event(uint64_t journal_block,
 
 	bufferlist event_bl;
 	event.encode_fields(event_bl);
-	m_event_file.write(event_offset, std::move(event_bl), (ctx != on_finish),
-		 ctx);
+	m_event_file.write(event_offset, std::move(event_bl), true, ctx);
 }
 
 //check event, add by dingl
@@ -688,9 +695,9 @@ int JournalStore<I>::check_event(journal_store::Event &e) {
 		lderr(cct) << "bad cache_block " << e.cache_block << dendl;
 	}
 
-	if (e.journal_block < 0 || e.journal_block > m_ring_buf_cnt) {
+	if (e.journal_event_idx < 0 || e.journal_event_idx > m_ring_buf_cnt) {
 		ret = -1;
-		lderr(cct) << "bad journal_block " << e.journal_block << dendl;
+		lderr(cct) << "bad journal event " << e.journal_event_idx << dendl;
 	}
 
 	calc_crc = ceph_crc32c(0, (unsigned char *)&e, Event::EVENT_CRC_LENGTH);
