@@ -291,6 +291,7 @@ void JournalStore<I>::demote_block(uint64_t block, bufferlist &&bl,
 	  event_ref->journal_event_idx = event_idx;//add by d
 
       Event event;
+	  memset(&event, 0, sizeof(event));//add by dingl
       event.fields.io_type = event_ref->io_type;
       event.fields.demoted = true;
       event.fields.allocated = true;
@@ -310,7 +311,6 @@ bool JournalStore<I>::is_writeback_pending() const {
   Mutex::Locker locker(m_lock);
   return (m_event_ref_writeback_iter != m_event_ref_alloc_iter &&
           m_event_ref_commit_iter == m_event_ref_writeback_iter);
-
 }
 
 template <typename I>
@@ -321,7 +321,7 @@ int JournalStore<I>::get_writeback_event(uint64_t *tid, uint64_t *image_block,
   {
     Mutex::Locker locker(m_lock);
     if (m_event_ref_writeback_iter == m_event_ref_alloc_iter) {
-      lderr(cct) << "no blocks available" << dendl;
+       ldout(cct, 20) << "no blocks available" << dendl;
       return -ENODATA;
     }
 
@@ -490,6 +490,7 @@ void JournalStore<I>::commit_event(uint64_t tid, Context *on_finish) {
         }
 
         Event event_copy;
+		memset(&event_copy, 0, sizeof(event_copy));//add by dingl
         event_copy.fields = event.fields;
         event_copy.fields.allocated = false;
 
@@ -518,7 +519,6 @@ void JournalStore<I>::commit_event(uint64_t tid, Context *on_finish) {
 
   // TODO throttle commit updates
   bufferlist event_bl;
-  event_bl.clear();//add by dingl
   event.encode_fields(event_bl);
   m_event_file.write(event_offset, std::move(event_bl), (ctx != on_finish),
                      ctx);

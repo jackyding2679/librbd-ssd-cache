@@ -635,8 +635,9 @@ struct C_WriteBlockRequest : BlockGuard::C_BlockRequest {
       }
       //req = new C_WriteToMetaRequest<I>(cct, meta_store, block_io.block, &policy, req);
       //Write metadata to cache_block
-	  req = new C_WriteToMetaRequest<I>(cct, meta_store, block_io.block, 
-	  											cache_block, &policy, req);
+      //No need to write metadata now
+	  //req = new C_WriteToMetaRequest<I>(cct, meta_store, block_io.block, 
+	  //											cache_block, &policy, req);
 	  
       IOType io_type = static_cast<IOType>(block_io.io_type);
       if ((io_type == IO_TYPE_WRITE || io_type == IO_TYPE_DISCARD) &&
@@ -1586,7 +1587,7 @@ void FileImageCache<I>::replay_journal(bufferlist *bl, Context *on_finish) {
       		io_type, demoted, BLOCK_SIZE);
 		req->send();
 	}
-	//wait all journal events to finish
+	//wait all journal event to finish
 	m_async_op_tracker.wait(m_image_ctx, on_finish);
 	//C_SaferCond ctx;
 	//t_async_op_tracker.wait_for_ops(&ctx);

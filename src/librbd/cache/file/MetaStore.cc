@@ -119,6 +119,8 @@ void MetaStore<I>::load_all(bufferlist *bl, Context *on_finish) {
         return;
       }
   });
+  //we don't need metadata for now
+  #if 0
   //for(uint64_t block_id = 0; block_id < offset_to_block(m_image_ctx.size); block_id++){//modyfied by dingl
   for(uint64_t block_id = 0; block_id < offset_to_block(m_cache_file_size); block_id++){
     //read_block(block_id, bl, ctx);
@@ -152,6 +154,7 @@ void MetaStore<I>::load_all(bufferlist *bl, Context *on_finish) {
   ldout(cct, 6) << "valid block count " << valid_block_count 
   						<< ",bl buffer length " << bl->length()  
   					<< ",bl buffer count " << bl->get_num_buffers() << dendl; 
+  #endif
   on_finish->complete(0);
 }
 
